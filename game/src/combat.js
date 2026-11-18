@@ -1,95 +1,111 @@
+// Solmar City v4 — combat: a hitscan pistol with a muzzle flash, pedestrians
+// who drop when hit, police cruisers that take damage, and return fire when
+// the heat is on.
 import * as THREE from 'three';
-// Solmar City — combat: a hitscan pistol with a tracer and muzzle flash,
-// police who shoot back at 2+ stars, and player health with slow regen.
-import { dist2d, sphGeo, std } from './util.js';
+import { rand } from './util.js';
 
-export class Combat {
-  constructor(scene, G) {
-    this.G = G; this.scene = scene;
-    this.cooldown = 0;
-    this.enemyFire = 0;
-    // Tracer: a thin glowing line shown for a blink after each shot.
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
-    this.tracer = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: '#ffe9a0', transparent: true, opacity: 0 }));
-    this.scene.add(this.tracer);
-    this.flash = new THREE.Mesh(sphGeo(0.22, 8, 6), new THREE.MeshBasicMaterial({ color: '#ffdf6a', transparent: true, opacity: 0 }));
-    this.scene.add(this.flash);
-    // The pistol in the player's hand (visible in first-person-ish foot view).
-    const gun = new THREE.Group();
-    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.42), std('#1c1e22', 0.4, 0.7));
-    gun.add(barrel);
-    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.2, 0.1), std('#2a2018', 0.7));
-    grip.position.set(0, -0.12, -0.14); gun.add(grip);
-    gun.position.set(0.32, -0.28, -0.7);
-    this.gun = gun;
-  }
-  attachGun(camera) { camera.add(this.gun); this.gun.visible = false; }
-  update(dt) {
-    this.cooldown = Math.max(0, this.cooldown - dt);
-    this.enemyFire = Math.max(0, this.enemyFire - dt);
-    this.tracer.material.opacity = Math.max(0, this.tracer.material.opacity - dt * 9);
-    this.flash.material.opacity = Math.max(0, this.flash.material.opacity - dt * 10);
-    // Player health regenerates slowly out of combat.
-    const G = this.G;
-    if (G.wanted === 0 && G.health < 100) G.health = Math.min(100, G.health + dt * 2);
-  }
-  // Fire from the camera through the crosshair. Returns what was hit.
-  shoot(camera, peds, police) {
-    const G = this.G;
-    if (this.cooldown > 0 || !G.player.onFoot) return null;
-    this.cooldown = 0.32;
-    G.audio.gunshot();
-    G.shotAt = { x: G.player.pos.x, z: G.player.pos.z };
-    const ray = new THREE.Raycaster();
-    ray.setFromCamera(new THREE.Vector2(0, 0), camera);
-    ray.far = 90;
-    // Aim at the nearest living ped or cruiser near the ray. The crosshair
-    // sits at screen centre, so a hit only counts close to the ray line.
-    let best = null, bestD = 90;
-    const test = (x, z, y, ref) => {
-      const v = new THREE.Vector3(x, y, z);
-      const to = v.clone().sub(camera.position);
-      const along = to.dot(ray.ray.direction);
-      if (along < 1 || along > bestD) return;
-      const perp = to.clone().addScaledVector(ray.ray.direction, -along).length();
-      if (perp < 1.6) { bestD = along; best = { ref, point: v, along }; }
-    };
-    for (const p of peds.list) if (!p.dead) test(p.x, p.z, 1.2, { kind: 'ped', ped: p });
-    for (const c of police.cruisers) test(c.x, c.z, 1.0, { kind: 'cop', cop: c });
-    const from = camera.position.clone();
-    const to = best ? best.point : from.clone().addScaledVector(ray.ray.direction, 60);
-    const pos = this.tracer.geometry.attributes.position;
-    pos.setXYZ(0, from.x, from.y, from.z); pos.setXYZ(1, to.x, to.y, to.z);
-    pos.needsUpdate = true;
-    this.tracer.material.opacity = 0.95;
-    this.flash.position.copy(from).addScaledVector(ray.ray.direction, 1.1);
-    this.flash.material.opacity = 0.95;
-    if (!best) return { kind: 'miss' };
-    if (best.ref.kind === 'ped') {
-      const killed = peds.damage(best.ref.ped, 50);
-      G.addWanted(killed ? 2 : 1);
-      return { kind: 'ped', killed };
-    }
-    // Shooting a cruiser dents it and draws heat.
-    G.addWanted(1);
-    return { kind: 'cop' };
-  }
+export function createCombat(world) {
+  const ray = new THREE.Raycaster();
+  const center = new THREE.Vector2(0, 0);
+  const flash = new THREE.PointLight(0xffe9a0, 0, 18, 1.6);
+  world.scene.add(flash);
+  const C = {
+    cooldown: 0,
+    fireTimer: 1,
+    flashT: 0,
+    targets() {
+      const list = [];
+      for (const p of world.peds.list) if (p.alive) list.push(p.mesh);
+      for (const c of world.police.cars) if (!c.disabled) list.push(c.group);
+      return list;
+    },
+    shoot() {
+      if (C.cooldown > 0 || world.state !== 'playing') return false;
+      C.cooldown = 0.28;
+      world.audio.shot();
+      const cam = world.camera;
+      ray.setFromCamera(center, cam);
+      const hits = ray.intersectObjects(C.targets(), true);
+      flash.position.copy(cam.position).add(new THREE.Vector3(0, -0.2, 0));
+      flash.intensity = 26;
+      C.flashT = 0.06;
+      if (!hits.length) return true;
+      const hit = hits[0];
+      const targetSet = new Set(C.targets());
+      let obj = hit.object, ent = null, kind = null;
+      while (obj) {
+        if (targetSet.has(obj)) {
+          if (obj.userData && obj.userData.isPed) { ent = obj.userData.ref; kind = 'ped'; }
+          else { ent = obj.userData.ref; kind = 'police'; }
+          break;
+        }
+        obj = obj.parent;
+      }
+      if (kind === 'ped' && ent) {
+        world.peds.killAt({ x: hit.point.x, z: hit.point.z }, 2.5);
+        world.peds.fleeFrom(hit.point.x, hit.point.z, 22);
+        world.addWanted(1);
+        world.toast('You shot a pedestrian — the cops are coming.');
+      } else if (kind === 'police' && ent) {
+        ent.hits = (ent.hits || 0) + 1;
+        if (ent.hits >= 3) {
+          ent.disabled = true;
+          ent.speed = 0;
+          world.toast('Cruiser disabled.');
+        }
+        world.addWanted(1);
+      }
+      return true;
+    },
+    shootAt(x, y, z) {
+      if (C.cooldown > 0) return false;
+      C.cooldown = 0.28;
+      world.audio.shot();
+      const cam = world.camera;
+      const dir = new THREE.Vector3(x - cam.position.x, y - cam.position.y, z - cam.position.z).normalize();
+      ray.set(cam.position, dir);
+      const hits = ray.intersectObjects(C.targets(), true);
+      if (!hits.length) return true;
+      const hit = hits[0];
+      const targetSet = new Set(C.targets());
+      let obj = hit.object;
+      while (obj) {
+        if (targetSet.has(obj) && obj.userData && obj.userData.isPed) {
+          world.peds.killAt({ x: hit.point.x, z: hit.point.z }, 2.5);
+          world.peds.fleeFrom(hit.point.x, hit.point.z, 22);
+          world.addWanted(1);
+          return true;
+        }
+        obj = obj.parent;
+      }
+      return true;
+    },
+    update(dt) {
+      C.cooldown = Math.max(0, C.cooldown - dt);
+      if (C.flashT > 0) {
+        C.flashT -= dt;
+        if (C.flashT <= 0) flash.intensity = 0;
+      }
+      if (world.police.wanted >= 2 && world.state === 'playing') {
+        C.fireTimer -= dt;
+        if (C.fireTimer <= 0) {
+          C.fireTimer = rand(0.9, 1.6);
+          const pp = world.playerPos();
+          const near = world.police.cars.some((c) => {
+            const d = Math.hypot(c.group.position.x - pp.x, c.group.position.z - pp.z);
+            return d < 42;
+          });
+          if (near && Math.random() < 0.4) {
+            world.audio.shot();
+            world.damage(8);
+          }
+        }
+      }
+    },
+  };
+  return C;
+}
 
-  // Police return fire when the player is wanted and in range.
-  policeFire(dt, police) {
-    const G = this.G;
-    if (G.wanted < 2 || this.enemyFire > 0 || G.player.car) return;
-    let nearest = null, bd = 42;
-    for (const c of police.cruisers) {
-      const d = dist2d(c.x, c.z, G.player.pos.x, G.player.pos.z);
-      if (d < bd) { bd = d; nearest = c; }
-    }
-    if (!nearest) return;
-    this.enemyFire = 0.9;
-    G.audio.gunshot();
-    G.health = Math.max(0, G.health - 9);
-    G.hud.flash('Taking fire!');
-    if (G.health <= 0) G.wasted();
-  }
+export function combatHelpText() {
+  return 'Click to shoot the pistol. Police shoot back at 2 stars or more.';
 }

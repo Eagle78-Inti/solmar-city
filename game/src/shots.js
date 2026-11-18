@@ -1,62 +1,39 @@
-// Solmar City — screenshot staging: deterministic setups for the four
-// screenshots, driven by window.SOLMAR.stage(name) or ?shot=name in the URL.
-// Each one shows several systems at once: the chase, the drive, on foot at
-// dusk, and the final mission with the helicopter.
-import { SPOTS } from './city.js';
-
+// Solmar City v4 — screenshot staging: each named shot puts the player, the
+// time of day, the wanted level and the police exactly where the frame needs
+// them, so one load of the page is one finished screenshot.
 export function stageShot(G, name) {
-  const P = G.player;
-  // Clear any live wanted/police first so each shot starts clean.
-  G.setWanted(0);
-  G.police.clear();
   if (name === 'chase') {
-    G.dayT = 0.72; // deep night
-    G.missions.index = 1; G.missions.phase = 'escape';
-    G.missions.setObjective();
-    P.teleport(20, -40, Math.PI);
-    G.enterCar(G.playerCar, true);
-    G.playerCar.speed = 9;
+    G.setTime(21.4);
+    G.teleportCar(0, 40, 0);
     G.setWanted(3);
-    G.police.stageChase(20, -40, Math.PI, 4);
-    G.camYaw = Math.PI; G.snapCamera();
+    const pp = G.playerPos();
+    G.police.cars.forEach((c, i) => {
+      const a = i * 1.7 + 0.6;
+      c.group.position.set(pp.x + Math.cos(a) * 26, 0, pp.z + Math.sin(a) * 26 - 18);
+      c.speed = 12;
+    });
+    G.missions.override = 'The Getaway — lose the cops';
   } else if (name === 'drive') {
-    G.dayT = 0.3; // bright late morning
-    G.missions.index = 0; G.missions.phase = 'go';
-    G.missions.setObjective();
-    P.teleport(60, -100, 0);
-    G.enterCar(G.playerCar, true);
-    G.playerCar.speed = 10;
-    G.camYaw = 0; G.snapCamera();
+    G.setTime(13.5);
+    G.teleportCar(-120, 60, 0);
+    G.car.speed = 12;
+    G.setWanted(0);
+    G.missions.override = 'Cruise Bay Avenue';
   } else if (name === 'foot') {
-    G.dayT = 0.52; // dusk, sun setting over the bay to the west
-    G.missions.index = 0; G.missions.phase = 'go';
-    G.missions.setObjective();
-    P.teleport(-138, 20, -Math.PI / 2); // face west, into the sunset; taxi ahead-left
-    P.onFoot = true; P.mesh.visible = true;
-    G.playerCar.mesh.visible = false;
-    G.camYaw = -Math.PI / 2; G.snapCamera();
+    G.setTime(18.4);
+    G.exitCar();
+    G.teleportPlayer(-128, 10, Math.PI / 2);
+    G.setWanted(0);
+    G.missions.override = 'On foot — Bay Avenue. Press E near a car to take it.';
   } else if (name === 'mission') {
-    G.dayT = 0.78; // night
-    G.missions.index = 4; G.missions.phase = 'escape';
-    G.missions.setObjective();
-    P.teleport(100, 40, Math.PI);
-    G.enterCar(G.playerCar, true);
-    G.playerCar.speed = 8;
+    G.setTime(23.2);
+    G.teleportCar(60, 60, -Math.PI * 0.75);
     G.setWanted(4);
-    G.police.stageChase(100, 40, Math.PI, 5);
-    G.camYaw = Math.PI; G.snapCamera();
+    G.police.orbit = Math.PI * 0.25;
+    G.missions.override = "IT'S A SETUP — RUN!";
   }
-  G.hud.update();
+  G.state = 'playing';
+  G.hud.hideStart();
 }
 
-  // Stage from the URL (?shot=chase) once the game has booted.
-  export function stageFromUrl(G) {
-    const name = new URLSearchParams(location.search).get('shot');
-    if (name && ['chase', 'drive', 'foot', 'mission'].includes(name)) {
-      G.started = true;
-      G.hud.hideMenu();
-      stageShot(G, name);
-      return name;
-    }
-    return null;
-  }
+export const SHOT_NAMES = ['chase', 'drive', 'foot', 'mission'];

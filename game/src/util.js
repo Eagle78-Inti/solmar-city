@@ -1,79 +1,42 @@
-import * as THREE from 'three';
-// Solmar City — shared utilities: seeded random, math helpers, procedural
-// canvas textures and shared geometry/material caches. Everything here is
-// written for this game; nothing is copied from any other project.
-export function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+// Solmar City v4 — small math and random helpers shared by every system.
+export const TAU = Math.PI * 2;
+export function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+export function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+export function lerp(a, b, t) { return a + (b - a) * t; }
+export function smoothstep(a, b, t) {
+  const x = clamp01((t - a) / (b - a));
+  return x * x * (3 - 2 * x);
 }
-
-export const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
-export const lerp = (a, b, t) => a + (b - a) * t;
-export const smooth = (t) => t * t * (3 - 2 * t);
-// Bell curve peaking at 1 when t is near c, falling to 0 at distance w.
-export const bump = (t, c, w) => Math.max(0, 1 - Math.abs(t - c) / w);
-export const lerpAngle = (a, b, t) => {
-  let d = (b - a) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d < -Math.PI) d += Math.PI * 2;
+export function rand(a = 1, b) { return b === undefined ? Math.random() * a : a + Math.random() * (b - a); }
+export function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
+export function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+export function angleLerp(a, b, t) {
+  let d = (b - a) % TAU;
+  if (d > Math.PI) d -= TAU;
+  if (d < -Math.PI) d += TAU;
   return a + d * t;
-};
-export const dist2d = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
-export const pick = (rng, arr) => arr[Math.floor(rng() * arr.length)];
-
-// Make a canvas texture from a 2D painter function. The painter gets the
-// context, width and height; the result repeats with the given repeat.
-export function canvasTexture(w, h, painter, rx = 1, ry = 1) {
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  painter(c.getContext('2d'), w, h);
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(rx, ry);
-  t.anisotropy = 4; t.colorSpace = THREE.SRGBColorSpace;
-  return t;
 }
-
-// A speckled-noise painter shared by several textures.
-export function speckle(ctx, w, h, rng, n, colors, size = 2) {
-  for (let i = 0; i < n; i++) {
-    ctx.fillStyle = pick(rng, colors);
-    ctx.globalAlpha = 0.12 + rng() * 0.25;
-    const s = 1 + rng() * size;
-    ctx.fillRect(rng() * w, rng() * h, s, s);
-  }
-  ctx.globalAlpha = 1;
+export function dist2(ax, az, bx, bz) {
+  const dx = ax - bx, dz = az - bz;
+  return Math.sqrt(dx * dx + dz * dz);
 }
-
-// Shared geometry cache: one box / cylinder / sphere reused by every mesh
-// that needs it, so the scene stays light on draw calls and memory.
-const _geo = {};
-export function boxGeo(w, h, d) {
-  const k = `b${w}|${h}|${d}`;
-  return (_geo[k] ||= new THREE.BoxGeometry(w, h, d));
+export function dist2sq(ax, az, bx, bz) {
+  const dx = ax - bx, dz = az - bz;
+  return dx * dx + dz * dz;
 }
-export function cylGeo(rt, rb, h, seg = 12) {
-  const k = `c${rt}|${rb}|${h}|${seg}`;
-  return (_geo[k] ||= new THREE.CylinderGeometry(rt, rb, h, seg));
+export function moveToward(v, target, maxDelta) {
+  if (v < target) return Math.min(v + maxDelta, target);
+  if (v > target) return Math.max(v - maxDelta, target);
+  return v;
 }
-export function sphGeo(r, w = 12, h = 10) {
-  const k = `s${r}|${w}|${h}`;
-  return (_geo[k] ||= new THREE.SphereGeometry(r, w, h));
+export function fmtMoney(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
+export function fmtClock(hours) {
+  const h = Math.floor(hours) % 24;
+  const m = Math.floor((hours % 1) * 60);
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
 }
-
-// Standard-material shorthand: the whole city uses MeshStandardMaterial so
-// light, shadow and reflections behave like a modern renderer expects.
-export function std(color, roughness = 0.85, metalness = 0.0, extra = {}) {
-  return new THREE.MeshStandardMaterial({ color, roughness, metalness, ...extra });
-}
-export function paint(color, clearcoat = 1.0) {
-  return new THREE.MeshPhysicalMaterial({
-    color, roughness: 0.32, metalness: 0.55,
-    clearcoat, clearcoatRoughness: 0.18,
-  });
+export function daypart(hours) {
+  if (hours < 5 || hours >= 20) return 'NIGHT';
+  if (hours < 8 || hours >= 17.5) return 'DUSK';
+  return 'DAY';
 }

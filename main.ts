@@ -1,10 +1,7 @@
-// Solmar City — the entry program (Node 22, standard library only).
-// It hands the game in: copies game/ and screenshots/ from beside this file
-// to /output and writes /output/dossier.json with the vendored make.fun
-// library, exactly as the kit's starter does. The game itself is plain
-// static files: game/index.html opens in desktop Chrome and plays offline.
-//
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
+// Solmar City v4 — the hand-in program for the make.fun GTA 6 bounty (Node 22,
+// standard library only). It copies game/ and screenshots/ from beside this
+// file to /output and writes /output/dossier.json with the vendored library.
+// Outside the grader, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -19,10 +16,12 @@ mkdirSync(out, { recursive: true });
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
 mkdirSync(join(out, 'screenshots'), { recursive: true });
 if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+if (!existsSync(join(here, 'game', 'index.html'))) throw new Error('game/index.html is missing');
 
-// The scorer's own caps: only text_max_bytes shapes the bytes; the others
-// refuse an entry the scorer would refuse (more than 4 screenshots or one
-// over 256 KiB; more than 993 files in game/ or 48 MiB of game files).
+// The scorer's own caps (reference/gate.json): only text_max_bytes shapes the bytes; the others refuse an entry the
+// scorer would refuse (more than 4 screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB of game
+// files, in all, or a path under game/ over 1000 bytes: game/ counts beside /output's own 1000-entry cap, its
+// screenshots/ and dossier.json).
 writeFileSync(
   join(out, 'dossier.json'),
   buildDossier(out, {
@@ -33,8 +32,3 @@ writeFileSync(
     game_path_max_bytes: 1000,
   }),
 );
-
-// Solmar City hands in game/ (the open world), screenshots/ (four real
-// renders of it) and dossier.json (the summary the judge reads).
-// Deterministic: the same files in, the same bytes out, every run.
-console.log('Solmar City handed in: game/ + screenshots/ + dossier.json -> ' + out);
