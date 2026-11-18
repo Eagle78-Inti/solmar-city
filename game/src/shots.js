@@ -1,79 +1,78 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Solmar City — screenshot mode: deterministic scene setups chosen by the
+// ?shot= query (?shot=chase|foot|drive|mission&seed=N). The game auto-starts,
+// the scene is staged, and the capture script screenshots the live render.
+// Every shot shows the HUD, the minimap and several systems at once.
+import { Car } from './vehicles.js';
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
-
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
+// Place pursuit cars at fixed offsets behind the player for a chase frame.
+function stagePolice(game, wanted, offsets) {
+  const police = game.police;
+  police.clear();
+  police.wanted = wanted;
+  police.heat = wanted * 18 + 10;
+  const pos = game.player.pos();
+  for (const [ox, oz] of offsets) {
+    const car = new Car(game.scene, pos.x + ox, pos.z + oz, game.player.inCar ? game.player.inCar.heading : 0,
+      0xf2f2f2, { police: true, maxSpeed: 34, accel: 17 });
+    police.cars.push(car);
   }
-  return Infinity;
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
-  }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
+function spawnPlayerCar(game, x, z, heading, color, speed) {
+  const car = new Car(game.scene, x, z, heading, color, { maxSpeed: 40, accel: 16 });
+  car.speed = speed || 0;
+  game.playerCar = car;
+  game.player.enterCar(car);
+  return car;
 }
 
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+export function applyShot(name, game) {
+  const P = game.player;
+  game.shotMode = true;
+  if (name === 'chase') {
+    // Cover: night chase, 3 stars, police cutting you off ahead, getaway objective.
+    game.setTimeOfDay(21.4);
+    spawnPlayerCar(game, 0, -60, 0, 0xc23b2e, 24);
+    game.missions.active = { def: game.missions.defs[1], step: 2, waitT: 0 };
+    // police staged AHEAD of the player (in frame, cutting across), frozen
+    stagePolice(game, 3, [[-7, 30], [8, 40], [0, 52]]);
+    game.police.frozen = true;
+    game.cash = 4820; game.respect = 34;
+    game.hud.setObjective('The Getaway', 'Lose the heat — reach the safehouse');
+  } else if (name === 'foot') {
+    // Dusk on foot, standing on Bay Avenue looking north down the street:
+    // neon, taxi waiting, peds, mission marker ahead.
+    game.setTimeOfDay(18.6);
+    P.x = 52; P.z = -40; P.heading = 0;
+    P.mesh.position.set(52, 0, -40);
+    game.camYaw = 0;
+    game.cash = 1250; game.respect = 12;
+    game.hud.setObjective('First Day on the Job', 'Go to the yellow marker to start · Mari Voss');
+    // a taxi waits nearby
+    const taxi = new Car(game.scene, 59, -28, Math.PI / 2, 0xe0b93c, { taxi: true, maxSpeed: 12, accel: 6 });
+    game.shotExtras = [taxi];
+  } else if (name === 'drive') {
+    // Daytime cruise through traffic on Bay Avenue.
+    game.setTimeOfDay(13.5);
+    spawnPlayerCar(game, 104, -104, Math.PI / 2, 0x2e6fc2, 18);
+    game.cash = 2340; game.respect = 21;
+    game.hud.setObjective('Free roam', 'Taxi fares (T), pier races, 20 coins to find');
+  } else if (name === 'mission') {
+    // Midnight setup: 4 stars, helicopter overhead ahead, escape to the hideout.
+    game.setTimeOfDay(23.4);
+    spawnPlayerCar(game, -190, 0, Math.PI / 2, 0x8a5fc2, 20);
+    game.missions.active = { def: game.missions.defs[4], step: 1, waitT: 0 };
+    // police staged ahead (in frame), heli held ahead of the player, frozen
+    stagePolice(game, 4, [[30, -7], [40, 7]]);
+    game.police.frozen = true;
+    game.police.heliAngle = Math.PI / 2; // heli sits ahead (+x) of the player
+    game.cash = 9100; game.respect = 61;
+    game.hud.setObjective('IT’S A SETUP — RUN!', 'Mari tipped the cops. Lose them and get to the hideout!');
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
-  }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  game.hud.show();
+  game.hud.setCash(game.cash);
+  game.hud.setRespect(game.respect);
+  game.hud.setStars(game.police.wanted);
+  game.hud.setHealth(P.health / 100);
+  game.hud.setSpeed(P.speedKmh(), !!P.inCar);
 }
