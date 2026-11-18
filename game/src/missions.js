@@ -1,332 +1,200 @@
-// Solmar City — missions and side work. Rook, a getaway driver new to Solmar,
-// works five jobs for the fixer Mari Voss: a first drive, a bank getaway, a
-// repo job, a neon street race, and a final score that ends in betrayal.
-// Between jobs: taxi fares, pier races and 20 Solmar coins hidden around town.
 import * as THREE from 'three';
-import { clamp, rand, randInt, pick, dist2, boxGeo, cylGeo, stdMat, glowSprite } from './util.js';
-import { Car } from './vehicles.js';
+// Solmar City — story missions, taxi jobs, coins and the pier race.
+// Rook is a getaway driver working for the fixer Mari Voss; her five jobs
+// pay cash and respect, and the last one ends with a twist.
+import { clamp, dist2d, boxGeo, cylGeo, sphGeo, std } from './util.js';
+import { SPOTS } from './city.js';
 
-const HIDEOUT = { x: -8, z: 8 };
-const GARAGE = { x: -44, z: -44 };
-const OFFICE = { x: 44, z: 44 };
-const BANK = { x: -88, z: 88 };
-const SAFEHOUSE = { x: 132, z: -88 };
-const IMPOUND = { x: 88, z: 132 };
-const DOCKS = { x: -176, z: -132 };
-const PIER_START = { x: -190, z: 0 };
-const CASINO = { x: 88, z: -44 };
-
-function buildMarker() {
-  const g = new THREE.Group();
-  const beamMat = new THREE.MeshBasicMaterial({ color: 0xffd319, transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-  const beam = new THREE.Mesh(cylGeo(1.6, 1.6, 60, 12, true), beamMat);
-  beam.position.y = 30;
-  g.add(beam);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(2.6, 0.18, 8, 32), new THREE.MeshBasicMaterial({ color: 0xffd319 }));
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = 0.15;
-  g.add(ring);
-  const diamond = new THREE.Mesh(new THREE.OctahedronGeometry(0.9), new THREE.MeshStandardMaterial({ color: 0xffd319, emissive: 0xffb300, emissiveIntensity: 1.6, roughness: 0.3 }));
-  diamond.position.y = 6;
-  g.add(diamond);
-  const glow = glowSprite('#ffd319', 10, 0.7);
-  glow.position.y = 6;
-  g.add(glow);
-  g.userData = { beam, diamond, glow, t: 0 };
-  return g;
-}
+const MISSION_DEFS = [
+  { name: 'First Run', pay: 550, respect: 10, text: 'Mari Voss has a job. Drive to the marker on Marlin Street.', target: SPOTS.start, radius: 6 },
+  { name: 'The Bank Job', pay: 1350, respect: 15, text: 'Hit the Solmar Bank, then lose the heat — reach the safehouse.', target: SPOTS.bank, radius: 7, escapeTo: SPOTS.safehouse, escapeWanted: 2 },
+  { name: 'Repo Run', pay: 1800, respect: 15, text: 'Steal the black SUV on Coral Row and bring it to the garage.', target: SPOTS.garage, radius: 7, needsCar: 'suv' },
+  { name: 'Pier Race', pay: 2200, respect: 20, text: 'Night race from the pier: hit all 5 checkpoints before time runs out.', target: SPOTS.pier, radius: 8, race: true },
+  { name: 'The Setup', pay: 3000, respect: 20, text: "Meet Mari at the casino. IT'S A SETUP — RUN! Lose them and get to the hideout!", target: SPOTS.casino, radius: 7, escapeTo: SPOTS.safehouse, escapeWanted: 4 },
+];
 
 export class Missions {
-  constructor(scene, city, game) {
-    this.scene = scene;
-    this.city = city;
-    this.g = game; // { player, police, audio, hud, traffic, parkedCars }
-    this.index = 0; // 0..4, 5 = all done
-    this.stage = 0;
-    this.done = false;
-    this.waitT = 0;
-    this.raceT = 0;
-    this.raceCp = 0;
-    this.raceRivals = [78, 86, 94];
-    this.taxi = null;
-    this.cash = 250;
-    this.respect = 0;
+  constructor(scene, G) {
+    this.G = G; this.scene = scene;
+    this.index = 0; this.phase = 'go'; // go | escape | race | done
+    this.raceCp = 0; this.raceTime = 0;
+    this.taxi = null; this.taxiFare = 0;
     this.coinsGot = 0;
-    this.marker = buildMarker();
-    this.marker.visible = false;
-    scene.add(this.marker);
-    this.markedCar = null;
-    this.raceCar = null;
-    this.buildCoins();
-    this.setMission(0, 0);
-  }
-
-  buildCoins() {
+    // Waypoint beacon: a column of light plus a floating ring.
+    const beamMat = new THREE.MeshBasicMaterial({ color: '#ffd23a', transparent: true, opacity: 0.28, depthWrite: false, blending: THREE.AdditiveBlending });
+    this.beacon = new THREE.Mesh(cylGeo(1.6, 1.6, 60, 12, 1, true), beamMat);
+    this.beacon.position.y = 30; scene.add(this.beacon);
+    const ringMat = new THREE.MeshBasicMaterial({ color: '#ffd23a', transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+    this.ring = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.16, 8, 24), ringMat);
+    this.ring.rotation.x = Math.PI / 2; this.ring.position.y = 1.2; scene.add(this.ring);
+    this.beacon.visible = false; this.ring.visible = false;
+    // 20 Solmar coins scattered around the map.
     this.coins = [];
+    const coinMat = new THREE.MeshStandardMaterial({ color: '#f2c200', metalness: 0.9, roughness: 0.25, emissive: new THREE.Color('#a88400'), emissiveIntensity: 0.4 });
     const spots = [
-      [-190, -44], [-190, 44], [-196, 120], [22, -66], [-66, 22], [110, 110], [154, -154],
-      [-154, 154], [66, -110], [-110, -66], [0, 132], [132, 0], [-22, 154], [176, 66],
-      [-132, -176], [44, -132], [-44, 176], [88, 66], [-66, -132], [22, 22],
+      [26, -100], [-60, -60], [100, -100], [140, 20], [20, 100], [-100, 60], [60, 140],
+      [-140, -100], [180, 100], [100, 180], [-20, -160], [-160, 40], [160, -60],
+      [-100, 160], [40, -60], [140, 140], [-60, 20], [20, 180], [180, -140], [-150, -30],
     ];
-    const mat = new THREE.MeshStandardMaterial({ color: 0xffd319, emissive: 0xa87800, emissiveIntensity: 0.7, roughness: 0.25, metalness: 0.9 });
     for (const [x, z] of spots) {
-      const m = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.2, 10, 20), mat);
-      m.position.set(x, 1.4, z);
-      m.rotation.y = Math.PI / 2;
-      m.castShadow = true;
-      this.scene.add(m);
+      const m = new THREE.Mesh(cylGeo(0.55, 0.55, 0.12, 18), coinMat);
+      m.rotation.x = Math.PI / 2; m.position.set(x, 1.1, z);
+      scene.add(m);
       this.coins.push({ mesh: m, x, z, got: false });
     }
+    // Race checkpoints for mission 4 and the repeatable pier sprint.
+    this.racePoints = [
+      { x: -152, z: 0 }, { x: -100, z: -100 }, { x: 20, z: -140 },
+      { x: 140, z: -60 }, { x: 100, z: 100 }, { x: -60, z: 140 },
+    ];
+    this.setObjective();
   }
-
-  setObjective(text) { this.g.hud.setObjective(text); }
-  say(text) { this.g.hud.message(text); }
-
-  setMarker(x, z, visible = true) {
-    this.marker.visible = visible;
-    this.marker.position.set(x, 0, z);
-    this.markerPos = { x, z };
+  def() { return MISSION_DEFS[this.index]; }
+  currentTarget() {
+    const d = this.def();
+    if (!d) return null;
+    if (this.phase === 'escape') return d.escapeTo;
+    if (this.phase === 'race') return this.racePoints[this.raceCp];
+    return d.target;
   }
-  hideMarker() { this.marker.visible = false; this.markerPos = null; }
-
-  setMission(i, stage) {
-    this.index = i;
-    this.stage = stage;
-    this.waitT = 0;
-    const g = this.g;
-    if (i === 0) {
-      this.setObjective('Mission 1 — First Wheels: get to the garage');
-      this.say('Mari Voss: "Rook. New in Solmar? Prove you can drive. Get to my garage."');
-      this.setMarker(GARAGE.x, GARAGE.z);
-    } else if (i === 1) {
-      this.setObjective('Mission 2 — The Getaway: drive to the bank');
-      this.say('Mari: "Bank on Coral Way. Pick up the crew. Then lose the heat."');
-      this.setMarker(BANK.x, BANK.z);
-    } else if (i === 2) {
-      this.setObjective('Mission 3 — Repo Run: steal the SUV from the impound lot');
-      this.say('Mari: "A client skipped payments. His SUV is in the impound lot. Bring it to the docks."');
-      this.setMarker(IMPOUND.x, IMPOUND.z);
-      this.markedCar = new Car(this.scene, { color: 0x2e6f8e, type: 'van', x: IMPOUND.x + 4, z: IMPOUND.z + 4, heading: Math.PI / 2 });
-      this.markedCar.marked = true;
-      g.parkedCars.push(this.markedCar); // enterable with E, like any parked car
-    } else if (i === 3) {
-      this.setObjective('Mission 4 — Neon Nights: get to the pier and take the race car');
-      this.say('Mari: "Pier 9, midnight race. Beat my boys and the purse is yours."');
-      this.setMarker(PIER_START.x, PIER_START.z);
-      this.raceCar = new Car(this.scene, { color: 0xc8102e, type: 'sport', x: PIER_START.x + 6, z: PIER_START.z + 2, heading: Math.PI });
-      this.raceCar.marked = true;
-      g.parkedCars.push(this.raceCar); // enterable with E, like any parked car
-    } else if (i === 4) {
-      this.setObjective('Mission 5 — The Setup: drive to the casino');
-      this.say('Mari: "One last score. The casino vault, midnight. Don\'t be late."');
-      this.setMarker(CASINO.x, CASINO.z);
-    } else {
-      this.done = true;
-      this.hideMarker();
-      this.setObjective('Solmar is yours. Free roam — taxi jobs, coins and races pay.');
-      this.say('Mari is gone. The city is yours, Rook.');
-    }
-    g.hud.setMission(i, this.done);
-  }
-
-  payout(amount, respect) {
-    this.cash += amount;
-    this.respect += respect;
-    this.g.audio.payout();
-    this.say(`Paid $${amount.toLocaleString()}  •  Respect +${respect}`);
-    this.g.hud.refresh();
-  }
-  completeMission(amount, respect) {
-    this.payout(amount, respect);
-    this.setMission(this.index + 1, 0);
-  }
-
-  // Taxi: press T in a car to take a fare. Pick up the waiting rider, then
-  // drop them off. Fare scales with the trip length.
-  startTaxi() {
-    const g = this.g;
-    if (this.taxi || !g.player.car) return false;
-    const rider = g.peds.find((p) => p.state === 'walk');
-    if (!rider) return false;
-    const drop = pick(g.city.sidewalkSpots);
-    this.taxi = { rider, pickup: { x: rider.pos.x, z: rider.pos.z }, drop: { x: drop.x, z: drop.z }, phase: 'pickup', fare: 0 };
-    this.setMarker(this.taxi.pickup.x, this.taxi.pickup.z);
-    this.setObjective('Taxi: pick up the rider');
-    this.say('Taxi job: pick up the rider waiting on the sidewalk.');
-    return true;
-  }
-  updateTaxi(dt) {
-    const g = this.g;
-    if (!this.taxi) return;
-    const t = this.taxi;
-    if (t.phase === 'pickup') {
-      if (dist2(g.player.pos.x, g.player.pos.z, t.pickup.x, t.pickup.z) < 6) {
-        t.phase = 'dropoff';
-        t.rider.pos.set(g.player.pos.x, 0, g.player.pos.z);
-        t.rider.state = 'down'; // rider rides along (hidden in the car)
-        t.rider.mesh.visible = false;
-        this.setMarker(t.drop.x, t.drop.z);
-        this.setObjective('Taxi: drop the rider off');
-        this.say('Rider aboard. Get them to the marker.');
-      }
-    } else if (dist2(g.player.pos.x, g.player.pos.z, t.drop.x, t.drop.z) < 6) {
-      const fare = Math.round(60 + dist2(t.pickup.x, t.pickup.z, t.drop.x, t.drop.z) * 0.55);
-      t.rider.mesh.visible = true;
-      t.rider.state = 'walk';
-      t.rider.pickTarget();
-      this.cash += fare;
-      this.g.audio.coin();
-      this.say(`Taxi fare paid: $${fare}`);
-      this.taxi = null;
-      this.hideMarker();
-      if (!this.done) this.restoreMissionMarker();
-      g.hud.refresh();
-    }
-  }
-  restoreMissionMarker() {
-    const targets = [GARAGE, BANK, IMPOUND, PIER_START, CASINO];
-    if (this.index < 5) this.setMarker(targets[this.index].x, targets[this.index].z);
+  setObjective() {
+    const d = this.def();
+    const G = this.G;
+    if (!d) { G.objective = 'All missions done — Solmar is yours, Rook.'; this.beacon.visible = false; this.ring.visible = false; return; }
+    const t = this.currentTarget();
+    G.objective = `${d.name} — ${this.phase === 'escape' ? 'Lose the heat — reach the safehouse.' : this.phase === 'race' ? `Checkpoint ${this.raceCp + 1}/5 — ${Math.max(0, Math.ceil(this.raceTime))}s left.` : d.text}`;
+    this.beacon.position.set(t.x, 30, t.z);
+    this.ring.position.set(t.x, 1.2, t.z);
+    this.beacon.visible = true; this.ring.visible = true;
   }
 
   update(dt) {
-    const g = this.g;
-    const p = g.player;
-    // Marker animation: spinning diamond, pulsing beam.
-    if (this.marker.visible) {
-      const u = this.marker.userData;
-      u.t += dt;
-      u.diamond.rotation.y += dt * 2;
-      u.diamond.position.y = 6 + Math.sin(u.t * 2.4) * 0.7;
-      u.beam.material.opacity = 0.2 + Math.sin(u.t * 3) * 0.08;
-    }
-    // Coins spin and get collected.
+    const G = this.G;
+    const t = this.currentTarget();
+    // Beacon pulse.
+    this.beacon.material.opacity = 0.22 + Math.sin(performance.now() / 300) * 0.08;
+    this.ring.rotation.z += dt * 1.2;
+    // Coins: spin, bob, collect on touch.
     for (const c of this.coins) {
       if (c.got) continue;
-      c.mesh.rotation.y += dt * 2.2;
-      c.mesh.position.y = 1.4 + Math.sin(performance.now() * 0.002 + c.x) * 0.15;
-      if (dist2(p.pos.x, p.pos.z, c.x, c.z) < 2.6) {
-        c.got = true;
-        c.mesh.visible = false;
-        this.coinsGot++;
-        this.cash += 50;
-        g.audio.coin();
-        this.say(`Solmar coin +$50 (${this.coinsGot}/20)`);
-        g.hud.refresh();
+      c.mesh.rotation.z += dt * 2;
+      c.mesh.position.y = 1.1 + Math.sin(performance.now() / 400 + c.x) * 0.15;
+      if (dist2d(G.player.pos.x, G.player.pos.z, c.x, c.z) < 2.2) {
+        c.got = true; c.mesh.visible = false;
+        G.cash += 50; this.coinsGot++;
+        G.audio.blip(1200, 0.12, 0.15);
+        G.hud.flash('+$50  Solmar coin');
       }
     }
-    this.updateTaxi(dt);
-    if (this.done) return;
-    const near = (x, z, r = 7) => dist2(p.pos.x, p.pos.z, x, z) < r;
-
-    if (this.index === 0) {
-      if (this.stage === 0 && near(GARAGE.x, GARAGE.z, 8)) {
-        this.stage = 1;
-        this.setObjective('Mission 1 — First Wheels: get in the coupe');
-        this.say('There she is. Get in and drive to Mari\'s office.');
-        this.markedCar = new Car(this.scene, { color: 0x1c4fd6, type: 'coupe', x: GARAGE.x + 6, z: GARAGE.z, heading: Math.PI / 2 });
-        this.markedCar.marked = true;
-        g.parkedCars.push(this.markedCar); // enterable with E, like any parked car
-        this.setMarker(GARAGE.x + 6, GARAGE.z);
-      } else if (this.stage === 1 && p.car === this.markedCar) {
-        this.stage = 2;
-        this.setObjective('Mission 1 — First Wheels: drive to Mari\'s office');
-        this.setMarker(OFFICE.x, OFFICE.z);
-      } else if (this.stage === 2 && near(OFFICE.x, OFFICE.z, 8)) {
-        this.say('Mari: "Not bad, Rook. You drive clean. More work soon."');
-        this.completeMission(550, 10);
-      }
-    } else if (this.index === 1) {
-      if (this.stage === 0 && near(BANK.x, BANK.z, 8)) {
-        this.stage = 1;
-        this.waitT = 0;
-        this.setObjective('Mission 2 — The Getaway: the crew is loading in…');
-        this.say('Crew: "Go go go — we\'re in!"');
-      } else if (this.stage === 1) {
-        this.waitT += dt;
-        if (this.waitT > 3) {
-          this.stage = 2;
-          g.police.addWanted(2);
-          this.setObjective('Mission 2 — The Getaway: lose the heat, then reach the safehouse');
-          this.say('Sirens. Lose them, then get to the safehouse on the east side.');
-          this.setMarker(SAFEHOUSE.x, SAFEHOUSE.z);
-        }
-      } else if (this.stage === 2 && g.police.wanted === 0 && near(SAFEHOUSE.x, SAFEHOUSE.z, 8)) {
-        this.say('Mari: "Clean getaway. The crew is impressed."');
-        this.completeMission(1350, 15);
-      }
-    } else if (this.index === 2) {
-      if (this.stage === 0 && p.car === this.markedCar) {
-        this.stage = 1;
-        g.police.addWanted(1);
-        this.setObjective('Mission 3 — Repo Run: deliver the SUV to the docks');
-        this.say('That SUV is hot now. Get it to the docks, fast.');
-        this.setMarker(DOCKS.x, DOCKS.z);
-      } else if (this.stage === 1 && near(DOCKS.x, DOCKS.z, 8)) {
-        this.say('Mari: "Client paid up. The SUV is ours now."');
-        this.completeMission(1800, 15);
-      }
-    } else if (this.index === 3) {
-      if (this.stage === 0 && p.car === this.raceCar) {
-        this.stage = 1;
-        this.raceT = 0;
-        this.raceCp = 0;
-        this.setObjective('Mission 4 — Neon Nights: race the circuit — 4 checkpoints');
-        this.say('Race! Beat the rival crews through all 4 checkpoints.');
-        this.setRaceMarker();
-      } else if (this.stage === 1) {
-        this.raceT += dt;
-        const cps = [[132, -88], [132, 88], [-88, 88], [-88, -88]];
-        const [cx, cz] = cps[this.raceCp];
-        if (near(cx, cz, 9)) {
-          this.raceCp++;
-          g.audio.coin();
-          if (this.raceCp >= 4) {
-            const won = this.raceT < this.raceRivals[0];
-            if (won) {
-              this.say(`You won the race in ${this.raceT.toFixed(1)}s — the pier goes wild!`);
-              this.completeMission(2200, 20);
-            } else {
-              this.say(`Too slow (${this.raceT.toFixed(1)}s). The rivals take the purse — try again.`);
-              g.audio.fail();
-              this.stage = 0;
-              this.setMarker(PIER_START.x, PIER_START.z);
-              this.setObjective('Mission 4 — Neon Nights: get back in the race car');
-            }
-          } else {
-            this.setRaceMarker();
-          }
-        } else if (this.raceT > 120) {
-          this.say('Race over — too slow. Get back to the pier and try again.');
-          this.stage = 0;
-          this.setMarker(PIER_START.x, PIER_START.z);
-        }
-      }
-    } else if (this.index === 4) {
-      if (this.stage === 0 && near(CASINO.x, CASINO.z, 8)) {
-        this.stage = 1;
-        this.waitT = 0;
-        this.setObjective('Mission 5 — The Setup: grabbing the score…');
-        this.say('Inside. The vault crew is working. Thirty seconds…');
-      } else if (this.stage === 1) {
-        this.waitT += dt;
-        if (this.waitT > 3) {
-          this.stage = 2;
-          g.police.setWanted(4);
-          this.setObjective('Mission 5 — The Setup: IT\'S A SETUP — RUN! Mari tipped the cops!');
-          this.say('Mari, on the radio: "Sorry, Rook. Business." The cops are everywhere. RUN to the hideout!');
-          this.setMarker(HIDEOUT.x, HIDEOUT.z);
-        }
-      } else if (this.stage === 2 && near(HIDEOUT.x, HIDEOUT.z, 8)) {
-        this.say('You made it. Mari sold you out — Solmar will hear about it. The city is yours now.');
-        this.completeMission(3000, 20);
+    // Race timer.
+    if (this.phase === 'race') {
+      this.raceTime -= dt;
+      if (this.raceTime <= 0) { // out of time: restart the race
+        this.raceCp = 0; this.raceTime = 90;
+        G.hud.flash('Too slow — race restarted');
+        this.setObjective();
+        return;
       }
     }
+    if (!t) return;
+    const d = dist2d(G.player.pos.x, G.player.pos.z, t.x, t.z);
+    const radius = this.phase === 'race' ? 7 : (this.def()?.radius ?? 6);
+    if (d < radius) this.arrive();
   }
-
-  setRaceMarker() {
-    const cps = [[132, -88], [132, 88], [-88, 88], [-88, -88]];
-    const [cx, cz] = cps[this.raceCp];
-    this.setMarker(cx, cz);
-    this.setObjective(`Mission 4 — Neon Nights: checkpoint ${this.raceCp + 1}/4 — ${this.raceT.toFixed(1)}s`);
+  arrive() {
+    const G = this.G;
+    const d = this.def();
+    if (!d) return;
+    if (this.phase === 'race') {
+      this.raceCp++;
+      G.audio.blip(980, 0.1, 0.14);
+      if (this.raceCp >= 5) {
+        if (this.sprint) {
+          this.sprint = false; this.phase = 'go'; this.raceCp = 0;
+          G.cash += 400; G.audio.jingle();
+          G.hud.flash('Pier sprint complete  +$400');
+          this.setObjective(); G.saveGame();
+          return;
+        }
+        return this.completeMission();
+      }
+      this.setObjective();
+      return;
+    }
+    if (this.phase === 'go' && d.race) {
+      this.phase = 'race';
+      // Checkpoint 0 is the pier start line the player is standing on — it
+      // counts at once, so the race never waits on a second frame here.
+      this.raceCp = 1; this.raceTime = 90;
+      G.hud.flash('Race started — 5 checkpoints, 90 seconds!');
+      this.setObjective();
+      return;
+    }
+    if (this.phase === 'go' && d.escapeTo) {
+      this.phase = 'escape';
+      G.setWanted(d.escapeWanted);
+      G.hud.flash(d.name === 'The Setup' ? "IT'S A SETUP — RUN!" : 'Heat is on — lose them!');
+      this.setObjective();
+      return;
+    }
+    if (this.phase === 'go' && d.needsCar) {
+      if (!G.player.car || G.player.car.stolen !== 'suv') {
+        // Flash once every few seconds, not every frame while parked here.
+        const now = performance.now();
+        if (!this.noCarAt || now - this.noCarAt > 4000) {
+          this.noCarAt = now;
+          G.hud.flash('You need the black SUV for this job.');
+        }
+        return;
+      }
+    }
+    this.completeMission();
+  }
+  completeMission() {
+    const G = this.G;
+    const d = this.def();
+    G.cash += d.pay; G.respect += d.respect;
+    // Reaching the safehouse means the heat is lost.
+    if (d.escapeTo) G.setWanted(0);
+    G.audio.jingle();
+    G.hud.flash(`${d.name} complete  +$${d.pay}`);
+    this.index++;
+    this.phase = 'go'; this.raceCp = 0;
+    if (this.index >= MISSION_DEFS.length) {
+      G.setWanted(0);
+      G.hud.flash('All missions done — Solmar is yours, Rook.');
+    }
+    this.setObjective();
+    G.saveGame();
+  }
+  // Taxi: hail with T, drive the passenger to the dropoff for a fare.
+  startTaxi() {
+    const G = this.G;
+    if (this.taxi) return false;
+    const spots = [[100, -60], [-20, 140], [140, 60], [-100, -140], [60, 20]];
+    const s = spots[Math.floor(Math.random() * spots.length)];
+    this.taxi = { x: s[0], z: s[1] };
+    this.taxiFare = 120 + Math.floor(Math.random() * 130);
+    G.hud.flash(`Taxi job — pick up the passenger (fare $${this.taxiFare})`);
+    return true;
+  }
+  taxiTarget() { return this.taxi; }
+  taxiArrive() {
+    const G = this.G;
+    if (!this.taxi) return;
+    G.cash += this.taxiFare;
+    G.audio.jingle();
+    G.hud.flash(`Taxi fare paid  +$${this.taxiFare}`);
+    this.taxi = null;
+    G.saveGame();
+  }
+  // Repeatable pier sprint: 4 checkpoints, $400 on completion.
+  startSprint() {
+    if (this.phase === 'race') return false;
+    this.sprint = true;
+    this.phase = 'race'; this.raceCp = 1; this.raceTime = 75; // skip the pier itself
+    this.G.hud.flash('Pier sprint — 4 checkpoints, 75 seconds, $400!');
+    this.setObjective();
+    return true;
   }
 }
