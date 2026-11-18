@@ -1,78 +1,125 @@
-// Solmar City — screenshot mode: deterministic scene setups chosen by the
-// ?shot= query (?shot=chase|foot|drive|mission&seed=N). The game auto-starts,
-// the scene is staged, and the capture script screenshots the live render.
-// Every shot shows the HUD, the minimap and several systems at once.
+// Solmar City — screenshot staging. The screenshots are real renders of the
+// game, but the game can be asked (with ?shot=chase&seed=1 in the URL) to set
+// a scene first: time of day, wanted level, police and traffic placed in
+// frame, the right mission objective on the HUD. Nothing is faked: the scene
+// is the live game, staged, then played for a few seconds before the shot.
+import * as THREE from 'three';
 import { Car } from './vehicles.js';
 
-// Place pursuit cars at fixed offsets behind the player for a chase frame.
-function stagePolice(game, wanted, offsets) {
-  const police = game.police;
-  police.clear();
-  police.wanted = wanted;
-  police.heat = wanted * 18 + 10;
-  const pos = game.player.pos();
-  for (const [ox, oz] of offsets) {
-    const car = new Car(game.scene, pos.x + ox, pos.z + oz, game.player.inCar ? game.player.inCar.heading : 0,
-      0xf2f2f2, { police: true, maxSpeed: 34, accel: 17 });
-    police.cars.push(car);
-  }
-}
-
-function spawnPlayerCar(game, x, z, heading, color, speed) {
-  const car = new Car(game.scene, x, z, heading, color, { maxSpeed: 40, accel: 16 });
-  car.speed = speed || 0;
-  game.playerCar = car;
-  game.player.enterCar(car);
+function putPlayerInCar(g, x, z, heading, color, type = 'sedan') {
+  const car = new Car(g.scene, { color, type, x, z, heading });
+  car.parked = false;
+  g.parkedCars.push(car);
+  g.player.enterCar(car);
+  g.player.camYaw = heading + Math.PI;
   return car;
 }
 
-export function applyShot(name, game) {
-  const P = game.player;
-  game.shotMode = true;
-  if (name === 'chase') {
-    // Cover: night chase, 3 stars, police cutting you off ahead, getaway objective.
-    game.setTimeOfDay(21.4);
-    spawnPlayerCar(game, 0, -60, 0, 0xc23b2e, 24);
-    game.missions.active = { def: game.missions.defs[1], step: 2, waitT: 0 };
-    // police staged AHEAD of the player (in frame, cutting across), frozen
-    stagePolice(game, 3, [[-7, 30], [8, 40], [0, 52]]);
-    game.police.frozen = true;
-    game.cash = 4820; game.respect = 34;
-    game.hud.setObjective('The Getaway', 'Lose the heat — reach the safehouse');
-  } else if (name === 'foot') {
-    // Dusk on foot, standing on Bay Avenue looking north down the street:
-    // neon, taxi waiting, peds, mission marker ahead.
-    game.setTimeOfDay(18.6);
-    P.x = 52; P.z = -40; P.heading = 0;
-    P.mesh.position.set(52, 0, -40);
-    game.camYaw = 0;
-    game.cash = 1250; game.respect = 12;
-    game.hud.setObjective('First Day on the Job', 'Go to the yellow marker to start · Mari Voss');
-    // a taxi waits nearby
-    const taxi = new Car(game.scene, 59, -28, Math.PI / 2, 0xe0b93c, { taxi: true, maxSpeed: 12, accel: 6 });
-    game.shotExtras = [taxi];
-  } else if (name === 'drive') {
-    // Daytime cruise through traffic on Bay Avenue.
-    game.setTimeOfDay(13.5);
-    spawnPlayerCar(game, 104, -104, Math.PI / 2, 0x2e6fc2, 18);
-    game.cash = 2340; game.respect = 21;
-    game.hud.setObjective('Free roam', 'Taxi fares (T), pier races, 20 coins to find');
-  } else if (name === 'mission') {
-    // Midnight setup: 4 stars, helicopter overhead ahead, escape to the hideout.
-    game.setTimeOfDay(23.4);
-    spawnPlayerCar(game, -190, 0, Math.PI / 2, 0x8a5fc2, 20);
-    game.missions.active = { def: game.missions.defs[4], step: 1, waitT: 0 };
-    // police staged ahead (in frame), heli held ahead of the player, frozen
-    stagePolice(game, 4, [[30, -7], [40, 7]]);
-    game.police.frozen = true;
-    game.police.heliAngle = Math.PI / 2; // heli sits ahead (+x) of the player
-    game.cash = 9100; game.respect = 61;
-    game.hud.setObjective('IT’S A SETUP — RUN!', 'Mari tipped the cops. Lose them and get to the hideout!');
+function placeTrafficNear(g, x, z, heading, count = 4) {
+  const f = { x: Math.sin(heading), z: Math.cos(heading) };
+  const r = { x: f.z, z: -f.x };
+  for (let i = 0; i < count; i++) {
+    const t = g.traffic[i % g.traffic.length];
+    const ahead = 14 + i * 11;
+    const side = (i % 2 === 0 ? 2.4 : -2.4) + (i % 3 === 0 ? 0 : 0);
+    t.pos.set(x + f.x * ahead + r.x * side, 0, z + f.z * ahead + r.z * side);
+    t.heading = heading;
+    t.along = 0;
+    t.speed = 6 + i;
   }
-  game.hud.show();
-  game.hud.setCash(game.cash);
-  game.hud.setRespect(game.respect);
-  game.hud.setStars(game.police.wanted);
-  game.hud.setHealth(P.health / 100);
-  game.hud.setSpeed(P.speedKmh(), !!P.inCar);
+}
+
+function stagePolice(g, x, z, heading, count) {
+  const f = { x: Math.sin(heading), z: Math.cos(heading) };
+  const r = { x: f.z, z: -f.x };
+  // NOTE: do not clear() here — clear() resets the wanted level to 0, and
+  // the caller sets the wanted level BEFORE staging the cruisers. Callers
+  // that need a clean slate call g.police.clear() before setWanted().
+  for (let i = 0; i < count; i++) {
+    const ahead = 16 + i * 9;
+    const side = i % 2 === 0 ? 2.4 : -2.4;
+    const car = new Car(g.scene, { color: 0xf0f0ee, type: 'police', x: x + f.x * ahead + r.x * side, z: z + f.z * ahead + r.z * side, heading: heading + Math.PI });
+    g.police.cars.push(car);
+  }
+}
+
+export function stageShot(g, name) {
+  const p = g.player;
+  g.started = true;
+  g.paused = false;
+  g.hud.hideStart();
+  g.audio.unlock();
+  if (name === 'chase') {
+    // Night chase: 3 stars, cruisers cutting you off ahead, "The Getaway".
+    g.city.setHour(21.4);
+    const x = 0, z = -44, heading = 0; // heading north up Coral Way (x = 0 road)
+    putPlayerInCar(g, x, z, heading, 0xc8102e, 'coupe');
+    g.player.car.speed = 19;
+    g.missions.setMission(1, 2);
+    g.missions.setObjective('The Getaway — Lose the heat — reach the safehouse — 2 stars and climbing. Drive!');
+    g.police.clear();
+    g.police.setWanted(3);
+    stagePolice(g, x, z, heading, 3);
+    placeTrafficNear(g, x, z, heading, 3);
+    g.missions.cash = 4820;
+    g.missions.respect = 34;
+    p.camYaw = heading + Math.PI;
+  } else if (name === 'drive') {
+    // Sun-soaked day drive: blue car, traffic, downtown towers.
+    g.city.setHour(13.5);
+    const x = 44, z = -44, heading = Math.PI / 2; // east along 44th (not the office, so the mission does not complete mid-shot)
+    putPlayerInCar(g, x, z, heading, 0x1c4fd6, 'sedan');
+    g.player.car.speed = 15;
+    g.missions.setObjective('Free roam — Solmar City');
+    g.missions.setMission(0, 2);
+    g.missions.setObjective('Mission 1 — First Wheels: drive to Mari\'s office');
+    placeTrafficNear(g, x, z, heading, 5);
+    p.camYaw = heading + Math.PI;
+  }
+
+  else if (name === 'foot') {
+    // Dusk on foot on Bay Avenue: Rook on the sidewalk facing the bay and
+    // the setting sun, taxi waiting at the kerb, neon coming on, palms and
+    // the water ahead. Rook faces WEST so the third-person camera sits over
+    // the open road to the east — facing east put the camera inside the
+    // beach-side buildings and the shot was a wall.
+    g.city.setHour(18.4);
+    const x = -176, z = -20, heading = -Math.PI / 2; // facing west, bay ahead
+    p.respawn(x, z, heading);
+    p.camYaw = heading + Math.PI;
+    // A taxi idling at the kerb beside Rook, in frame ahead-left.
+    const taxi = new Car(g.scene, { color: 0xf2c200, type: 'taxi', x: x - 4, z: z + 3.4, heading: -Math.PI / 2 });
+    g.parkedCars.push(taxi);
+    // A couple of walkers on the sidewalk for life, ahead of Rook.
+    for (let i = 0; i < 3; i++) {
+      const ped = g.peds[i];
+      ped.pos.set(x - 3 - i * 2.5, 0, z - 2 - i);
+      ped.heading = heading;
+      ped.state = 'walk';
+    }
+    g.missions.setObjective('On foot — Bay Avenue. Press E near a car to take it.');
+    g.missions.cash = 391;
+    g.missions.respect = 12;
+  } else if (name === 'mission') {
+    // The Setup: 4 stars, the helicopter and its searchlight over the casino,
+    // neon everywhere, "IT'S A SETUP — RUN!".
+    g.city.setHour(23.4);
+    const x = 88, z = -88, heading = Math.PI; // south on the casino road
+    putPlayerInCar(g, x, z, heading, 0x7a1fa2, 'sport');
+    g.player.car.speed = 14;
+    g.missions.setMission(4, 2);
+    g.missions.setObjective('The Setup — IT\'S A SETUP — RUN! — Mari tipped the cops. Lose them and get to the hideout!');
+    g.police.clear();
+    g.police.setWanted(4);
+    stagePolice(g, x, z, heading, 4);
+    g.police.ensureHeli();
+    g.police.heliAngle = 4.5; // heli AHEAD of the player, beam sweeping down to the car — behind the camera it put the cone straight across the frame
+    g.police.heliRadius = 40; // further out and lower so the heli itself reads in frame (overhead at 42 m it is above the camera's view)
+    g.police.heliHeight = 26;
+    placeTrafficNear(g, x, z, heading, 2);
+    g.missions.cash = 9100;
+    g.missions.respect = 61;
+    p.camYaw = heading + Math.PI;
+  }
+  g.hud.refresh();
 }

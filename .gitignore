@@ -1,2 +1,6 @@
 out/
 node_modules/
+.DS_Store
+# Local build output and editor clutter never enter the entry.
+*.log
+Thumbs.db

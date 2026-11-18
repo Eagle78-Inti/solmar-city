@@ -1,327 +1,332 @@
-// Solmar City — missions, side jobs and collectibles. The story: Rook, a new
-// getaway driver, works for the fixer Mari Voss — until the final job reveals
-// the twist. Side work: taxi fares, pier street races, and 20 Solmar coins.
+// Solmar City — missions and side work. Rook, a getaway driver new to Solmar,
+// works five jobs for the fixer Mari Voss: a first drive, a bank getaway, a
+// repo job, a neon street race, and a final score that ends in betrayal.
+// Between jobs: taxi fares, pier races and 20 Solmar coins hidden around town.
 import * as THREE from 'three';
-import { clamp, rand, randInt, pick, angleDiff } from './util.js';
-import { BLOCK, GRID, CITY_R } from './city.js';
+import { clamp, rand, randInt, pick, dist2, boxGeo, cylGeo, stdMat, glowSprite } from './util.js';
 import { Car } from './vehicles.js';
 
-const MISSION_LIST = [
-  {
-    id: 'm1', name: 'First Day on the Job', giver: 'Mari Voss',
-    briefing: 'Rook. Welcome to Solmar. I need a driver who keeps his mouth shut and his foot down. First job is easy: take the car, pick up my client at the marina hotel, drop him at the pier. Don’t scratch the paint.',
-    reward: 300, respect: 10,
-    steps: [
-      { type: 'goto', x: 26, z: 78, r: 6, title: 'Get to the car', sub: 'Mari left you a ride on Palm Row' },
-      { type: 'enter', title: 'Get in the car', sub: 'Press E near the car' },
-      { type: 'goto', x: 104, z: 52, r: 8, title: 'Pick up the client', sub: 'Marina Hotel, Bay Avenue' },
-      { type: 'goto', x: -208, z: 26, r: 8, title: 'Drop the client at the pier', sub: 'Drive him to Pier 9' },
-    ],
-  },
-  {
-    id: 'm2', name: 'The Getaway', giver: 'Mari Voss',
-    briefing: 'A friend of mine is making a withdrawal. You drive. Get to the bank, wait for my signal, then get us to the safehouse — and Rook, the cops will not be far behind.',
-    reward: 800, respect: 15,
-    steps: [
-      { type: 'goto', x: -52, z: -104, r: 8, title: 'Get to the bank', sub: 'Solmar Trust, Coral Street' },
-      { type: 'wait', x: -52, z: -104, r: 8, secs: 4, title: 'Wait for the bag', sub: 'Hold position…' },
-      { type: 'escape', x: -156, z: 156, r: 9, title: 'Lose the heat — reach the safehouse', sub: '2 stars and climbing. Drive!' },
-    ],
-  },
-  {
-    id: 'm3', name: 'Repo Run', giver: 'Mari Voss',
-    briefing: 'Somebody stopped paying for his gold ride. Take it back — gently. Bring the car to my garage in one piece and I’ll make it worth your while. Wreck it and you pay for it.',
-    reward: 600, respect: 12,
-    steps: [
-      { type: 'goto', x: 208, z: 104, r: 8, title: 'Find the gold car', sub: 'Parked on Sunset Row' },
-      { type: 'enterSpecific', title: 'Take the gold car', sub: 'Press E to get in — it’s yours now' },
-      { type: 'deliver', x: -104, z: 208, r: 9, title: 'Deliver it to the garage', sub: 'Keep the damage light!' },
-    ],
-  },
-  {
-    id: 'm4', name: 'Night Run', giver: 'Deke (street racer)',
-    briefing: 'Mari says you can drive. Prove it. Six checkpoints through the city at night, two of my boys on your tail. Win and the pot is yours. Lose and you walk home.',
-    reward: 1000, respect: 18,
-    steps: [
-      { type: 'goto', x: -208, z: -26, r: 8, title: 'Get to the start line', sub: 'Pier 9, after dark' },
-      { type: 'race', title: 'Race! Hit every checkpoint', sub: 'Beat Deke and his crew to the finish' },
-    ],
-  },
-  {
-    id: 'm5', name: 'The Setup', giver: 'Mari Voss',
-    briefing: 'Last job, Rook. One package, Pier 9, midnight. No questions. After this we’re square — I promise.',
-    reward: 2500, respect: 25,
-    steps: [
-      { type: 'goto', x: -208, z: 0, r: 8, title: 'Pick up the package', sub: 'Pier 9, midnight' },
-      { type: 'escape', x: 208, z: -156, r: 9, title: 'IT’S A SETUP — RUN!', sub: 'Mari tipped the cops. Lose them and get to the hideout!' },
-    ],
-  },
-];
+const HIDEOUT = { x: -8, z: 8 };
+const GARAGE = { x: -44, z: -44 };
+const OFFICE = { x: 44, z: 44 };
+const BANK = { x: -88, z: 88 };
+const SAFEHOUSE = { x: 132, z: -88 };
+const IMPOUND = { x: 88, z: 132 };
+const DOCKS = { x: -176, z: -132 };
+const PIER_START = { x: -190, z: 0 };
+const CASINO = { x: 88, z: -44 };
 
-const RACE_POINTS = [
-  { x: -156, z: -104 }, { x: -52, z: -208 }, { x: 104, z: -156 },
-  { x: 208, z: -52 }, { x: 156, z: 104 }, { x: 0, z: 208 },
-];
+function buildMarker() {
+  const g = new THREE.Group();
+  const beamMat = new THREE.MeshBasicMaterial({ color: 0xffd319, transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  const beam = new THREE.Mesh(cylGeo(1.6, 1.6, 60, 12, true), beamMat);
+  beam.position.y = 30;
+  g.add(beam);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(2.6, 0.18, 8, 32), new THREE.MeshBasicMaterial({ color: 0xffd319 }));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.15;
+  g.add(ring);
+  const diamond = new THREE.Mesh(new THREE.OctahedronGeometry(0.9), new THREE.MeshStandardMaterial({ color: 0xffd319, emissive: 0xffb300, emissiveIntensity: 1.6, roughness: 0.3 }));
+  diamond.position.y = 6;
+  g.add(diamond);
+  const glow = glowSprite('#ffd319', 10, 0.7);
+  glow.position.y = 6;
+  g.add(glow);
+  g.userData = { beam, diamond, glow, t: 0 };
+  return g;
+}
 
 export class Missions {
-  constructor(scene, city, hooks) {
-    this.scene = scene; this.city = city; this.hooks = hooks;
-    this.defs = MISSION_LIST;
-    this.index = 0;               // next story mission
-    this.active = null;           // {def, step, waitT, ...}
-    this.started = false;
-    this.coins = [];
-    this.coinCount = 0;
-    this.taxi = null;             // {state, passenger, dest, fare}
-    this.taxiCooldown = 0;
-    this.race = null;
-    this.repoCar = null;
-    // marker: glowing beacon + floating diamond
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffd75e, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false });
-    this.marker = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 40, 16, 1, true), mat);
-    this.marker.position.y = 20;
-    scene.add(this.marker);
-    const dia = new THREE.Mesh(new THREE.OctahedronGeometry(1.6),
-      new THREE.MeshBasicMaterial({ color: 0xffd75e }));
-    dia.position.y = 9;
-    this.marker.add(dia);
-    this.markerDiamond = dia;
+  constructor(scene, city, game) {
+    this.scene = scene;
+    this.city = city;
+    this.g = game; // { player, police, audio, hud, traffic, parkedCars }
+    this.index = 0; // 0..4, 5 = all done
+    this.stage = 0;
+    this.done = false;
+    this.waitT = 0;
+    this.raceT = 0;
+    this.raceCp = 0;
+    this.raceRivals = [78, 86, 94];
+    this.taxi = null;
+    this.cash = 250;
+    this.respect = 0;
+    this.coinsGot = 0;
+    this.marker = buildMarker();
     this.marker.visible = false;
-    this.spawnCoins();
+    scene.add(this.marker);
+    this.markedCar = null;
+    this.raceCar = null;
+    this.buildCoins();
+    this.setMission(0, 0);
   }
-  spawnCoins() {
-    const geo = new THREE.CylinderGeometry(0.9, 0.9, 0.18, 16);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffd75e });
-    for (let i = 0; i < 20; i++) {
-      const road = randInt(-GRID, GRID) * BLOCK;
-      const along = rand(-CITY_R + 20, CITY_R - 20);
-      const x = Math.random() < 0.5 ? road + pick([-11, 11]) : along;
-      const z = Math.random() < 0.5 ? along : road + pick([-11, 11]);
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set(x, 1.2, z);
-      m.rotation.x = Math.PI / 2;
+
+  buildCoins() {
+    this.coins = [];
+    const spots = [
+      [-190, -44], [-190, 44], [-196, 120], [22, -66], [-66, 22], [110, 110], [154, -154],
+      [-154, 154], [66, -110], [-110, -66], [0, 132], [132, 0], [-22, 154], [176, 66],
+      [-132, -176], [44, -132], [-44, 176], [88, 66], [-66, -132], [22, 22],
+    ];
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffd319, emissive: 0xa87800, emissiveIntensity: 0.7, roughness: 0.25, metalness: 0.9 });
+    for (const [x, z] of spots) {
+      const m = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.2, 10, 20), mat);
+      m.position.set(x, 1.4, z);
+      m.rotation.y = Math.PI / 2;
+      m.castShadow = true;
       this.scene.add(m);
-      this.coins.push({ mesh: m, x, z, taken: false });
+      this.coins.push({ mesh: m, x, z, got: false });
     }
   }
-  currentDef() { return MISSION_LIST[this.index] || null; }
-  // position the start marker for the next story mission (or the active target)
-  targetPos() {
-    if (this.active) {
-      const s = this.active.def.steps[this.active.step];
-      if (s && (s.type === 'goto' || s.type === 'wait' || s.type === 'escape' || s.type === 'deliver')) return { x: s.x, z: s.z };
-      if (s && s.type === 'race' && this.race) return this.race.points[this.race.playerCp] || null;
-      return null;
+
+  setObjective(text) { this.g.hud.setObjective(text); }
+  say(text) { this.g.hud.message(text); }
+
+  setMarker(x, z, visible = true) {
+    this.marker.visible = visible;
+    this.marker.position.set(x, 0, z);
+    this.markerPos = { x, z };
+  }
+  hideMarker() { this.marker.visible = false; this.markerPos = null; }
+
+  setMission(i, stage) {
+    this.index = i;
+    this.stage = stage;
+    this.waitT = 0;
+    const g = this.g;
+    if (i === 0) {
+      this.setObjective('Mission 1 — First Wheels: get to the garage');
+      this.say('Mari Voss: "Rook. New in Solmar? Prove you can drive. Get to my garage."');
+      this.setMarker(GARAGE.x, GARAGE.z);
+    } else if (i === 1) {
+      this.setObjective('Mission 2 — The Getaway: drive to the bank');
+      this.say('Mari: "Bank on Coral Way. Pick up the crew. Then lose the heat."');
+      this.setMarker(BANK.x, BANK.z);
+    } else if (i === 2) {
+      this.setObjective('Mission 3 — Repo Run: steal the SUV from the impound lot');
+      this.say('Mari: "A client skipped payments. His SUV is in the impound lot. Bring it to the docks."');
+      this.setMarker(IMPOUND.x, IMPOUND.z);
+      this.markedCar = new Car(this.scene, { color: 0x2e6f8e, type: 'van', x: IMPOUND.x + 4, z: IMPOUND.z + 4, heading: Math.PI / 2 });
+      this.markedCar.marked = true;
+      g.parkedCars.push(this.markedCar); // enterable with E, like any parked car
+    } else if (i === 3) {
+      this.setObjective('Mission 4 — Neon Nights: get to the pier and take the race car');
+      this.say('Mari: "Pier 9, midnight race. Beat my boys and the purse is yours."');
+      this.setMarker(PIER_START.x, PIER_START.z);
+      this.raceCar = new Car(this.scene, { color: 0xc8102e, type: 'sport', x: PIER_START.x + 6, z: PIER_START.z + 2, heading: Math.PI });
+      this.raceCar.marked = true;
+      g.parkedCars.push(this.raceCar); // enterable with E, like any parked car
+    } else if (i === 4) {
+      this.setObjective('Mission 5 — The Setup: drive to the casino');
+      this.say('Mari: "One last score. The casino vault, midnight. Don\'t be late."');
+      this.setMarker(CASINO.x, CASINO.z);
+    } else {
+      this.done = true;
+      this.hideMarker();
+      this.setObjective('Solmar is yours. Free roam — taxi jobs, coins and races pay.');
+      this.say('Mari is gone. The city is yours, Rook.');
     }
-    const d = this.currentDef();
-    if (!d) return null;
-    const s = d.steps[0];
-    return { x: s.x, z: s.z };
+    g.hud.setMission(i, this.done);
   }
-  startMission(def) {
-    this.active = { def, step: 0, waitT: 0, racePlaced: false };
-    this.hooks.toast(`MISSION: ${def.name}`);
-    this.hooks.bigMsg(`${def.name}`, `${def.giver}: “${def.briefing}”`, 5200);
-    this.hooks.audio.missionDone();
+
+  payout(amount, respect) {
+    this.cash += amount;
+    this.respect += respect;
+    this.g.audio.payout();
+    this.say(`Paid $${amount.toLocaleString()}  •  Respect +${respect}`);
+    this.g.hud.refresh();
   }
-  completeMission() {
-    const def = this.active.def;
-    this.hooks.addCash(def.reward);
-    this.hooks.addRespect(def.respect);
-    this.hooks.bigMsg('MISSION COMPLETE', `+${def.reward} · +${def.respect} respect`, 3600);
-    this.hooks.audio.missionDone();
-    this.active = null;
-    this.index++;
-    if (def.id === 'm5') {
-      this.hooks.bigMsg('SOLMAR CITY — END OF THE LINE', 'Mari set you up. You kept the package, lost the fixer, and kept the city. Rook drives for Rook now. Free roam: taxi fares, races and coins still pay.', 8000);
-    }
+  completeMission(amount, respect) {
+    this.payout(amount, respect);
+    this.setMission(this.index + 1, 0);
   }
-  failMission(reason) {
-    if (!this.active) return;
-    this.hooks.bigMsg('MISSION FAILED', reason, 3600);
-    this.hooks.audio.fail();
-    this.active = null;
-    this.cleanupRace();
-  }
-  cleanupRace() {
-    if (this.race) {
-      for (const r of this.race.rivals) r.dispose();
-      this.race = null;
-    }
-  }
-  // --- taxi ---
-  maybeStartTaxi(player) {
-    if (this.taxi || this.taxiCooldown > 0 || !player.inCar) return false;
-    // a fare appears near the player
-    const pos = player.pos();
-    const a = rand(0, Math.PI * 2);
-    const x = pos.x + Math.sin(a) * rand(20, 45);
-    const z = pos.z + Math.cos(a) * rand(20, 45);
-    const snap = this.city.nearestRoadPoint(x, z);
-    const dest = this.city.nearestRoadPoint(rand(-CITY_R, CITY_R), rand(-CITY_R, CITY_R));
-    this.taxi = { state: 'pickup', x: snap.x, z: snap.z, dx: dest.x, dz: dest.z, fare: 0 };
-    this.hooks.toast('TAXI FARE: pick up the passenger at the marker');
+
+  // Taxi: press T in a car to take a fare. Pick up the waiting rider, then
+  // drop them off. Fare scales with the trip length.
+  startTaxi() {
+    const g = this.g;
+    if (this.taxi || !g.player.car) return false;
+    const rider = g.peds.find((p) => p.state === 'walk');
+    if (!rider) return false;
+    const drop = pick(g.city.sidewalkSpots);
+    this.taxi = { rider, pickup: { x: rider.pos.x, z: rider.pos.z }, drop: { x: drop.x, z: drop.z }, phase: 'pickup', fare: 0 };
+    this.setMarker(this.taxi.pickup.x, this.taxi.pickup.z);
+    this.setObjective('Taxi: pick up the rider');
+    this.say('Taxi job: pick up the rider waiting on the sidewalk.');
     return true;
   }
-  // --- race ---
-  startRace(player) {
-    const rivals = [];
-    for (let i = 0; i < 2; i++) {
-      const c = new Car(this.scene, -208 + i * 6, -26 + (i - 0.5) * 8, -Math.PI / 2, i === 0 ? 0xd94f3d : 0x3d7bd9, { maxSpeed: 33, accel: 14 });
-      c.cp = 0; c.raceSpeed = 30 + i;
-      rivals.push(c);
+  updateTaxi(dt) {
+    const g = this.g;
+    if (!this.taxi) return;
+    const t = this.taxi;
+    if (t.phase === 'pickup') {
+      if (dist2(g.player.pos.x, g.player.pos.z, t.pickup.x, t.pickup.z) < 6) {
+        t.phase = 'dropoff';
+        t.rider.pos.set(g.player.pos.x, 0, g.player.pos.z);
+        t.rider.state = 'down'; // rider rides along (hidden in the car)
+        t.rider.mesh.visible = false;
+        this.setMarker(t.drop.x, t.drop.z);
+        this.setObjective('Taxi: drop the rider off');
+        this.say('Rider aboard. Get them to the marker.');
+      }
+    } else if (dist2(g.player.pos.x, g.player.pos.z, t.drop.x, t.drop.z) < 6) {
+      const fare = Math.round(60 + dist2(t.pickup.x, t.pickup.z, t.drop.x, t.drop.z) * 0.55);
+      t.rider.mesh.visible = true;
+      t.rider.state = 'walk';
+      t.rider.pickTarget();
+      this.cash += fare;
+      this.g.audio.coin();
+      this.say(`Taxi fare paid: $${fare}`);
+      this.taxi = null;
+      this.hideMarker();
+      if (!this.done) this.restoreMissionMarker();
+      g.hud.refresh();
     }
-    this.race = { points: RACE_POINTS, playerCp: 0, rivals, startT: performance.now(), done: false };
-    this.hooks.bigMsg('STREET RACE', 'Six checkpoints. Beat Deke’s crew. First: $500.', 3200);
   }
-  update(dt, player, police, audio) {
-    const pos = player.pos();
-    const t = performance.now();
-    // marker bob + position
-    this.markerDiamond.rotation.y += dt * 2;
-    this.markerDiamond.position.y = 9 + Math.sin(t / 300) * 1.2;
-    const target = this.targetPos();
-    if (target) {
-      this.marker.visible = true;
-      this.marker.position.set(target.x, 20, target.z);
-    } else this.marker.visible = false;
+  restoreMissionMarker() {
+    const targets = [GARAGE, BANK, IMPOUND, PIER_START, CASINO];
+    if (this.index < 5) this.setMarker(targets[this.index].x, targets[this.index].z);
+  }
 
-    // --- story mission logic ---
-    if (!this.active) {
-      const d = this.currentDef();
-      if (d) {
-        this.hooks.setObjective(d.name, 'Go to the yellow marker to start · ' + d.giver);
-        const s = d.steps[0];
-        if (Math.hypot(pos.x - s.x, pos.z - s.z) < (s.r || 8)) {
-          if (d.id === 'm3') this.spawnRepoCar();
-          this.startMission(d);
-        }
-      } else {
-        this.hooks.setObjective('Free roam', 'Taxi fares (T), pier races, 20 coins to find');
-      }
-    } else {
-      const m = this.active, s = m.def.steps[m.step];
-      if (!s) { this.completeMission(); return; }
-      this.hooks.setObjective(m.def.name, s.title + (s.sub ? ' — ' + s.sub : ''));
-      if (s.type === 'goto' || s.type === 'escape' || s.type === 'deliver') {
-        if (Math.hypot(pos.x - s.x, pos.z - s.z) < s.r) {
-          if (s.type === 'escape' && m.def.id === 'm2') { /* reached safehouse */ }
-          if (s.type === 'deliver' && player.inCar && player.inCar.health < 40) {
-            this.failMission('The car was too wrecked to sell.');
-            return;
-          }
-          m.step++;
-          // the m5 pickup is a trap: Mari tipped the cops — the ambush starts here
-          if (m.def.id === 'm5' && m.step === 1) police.addCrime(60);
-          if (m.step >= m.def.steps.length) { this.completeMission(); return; }
-          const ns = m.def.steps[m.step];
-          if (ns && ns.type === 'race') this.startRace(player);
-        }
-      } else if (s.type === 'enter') {
-        if (player.inCar) { m.step++; }
-      } else if (s.type === 'enterSpecific') {
-        if (player.inCar === this.repoCar) { m.step++; }
-      } else if (s.type === 'wait') {
-        if (Math.hypot(pos.x - s.x, pos.z - s.z) < s.r) {
-          m.waitT += dt;
-          this.hooks.setObjective(m.def.name, `Wait for the bag… ${Math.ceil(s.secs - m.waitT)}s`);
-          if (m.waitT >= s.secs) {
-            m.step++;
-            if (m.def.id === 'm2') police.addCrime(26); // the getaway begins
-            if (m.def.id === 'm5') police.addCrime(60); // the ambush
-          }
-        } else m.waitT = 0;
-      } else if (s.type === 'race') {
-        // race progress handled below; mission completes when race ends
-        if (this.race && this.race.done) {
-          const place = this.race.place;
-          const bonus = place === 1 ? 500 : place === 2 ? 200 : 50;
-          this.hooks.addCash(bonus);
-          this.hooks.bigMsg(place === 1 ? 'YOU WON THE RACE' : 'RACE OVER', `Finished ${place === 1 ? '1st' : place === 2 ? '2nd' : '3rd'} · +$${bonus}`, 3200);
-          this.cleanupRace();
-          m.step++;
-          if (m.step >= m.def.steps.length) { this.completeMission(); return; }
-        }
-      }
+  update(dt) {
+    const g = this.g;
+    const p = g.player;
+    // Marker animation: spinning diamond, pulsing beam.
+    if (this.marker.visible) {
+      const u = this.marker.userData;
+      u.t += dt;
+      u.diamond.rotation.y += dt * 2;
+      u.diamond.position.y = 6 + Math.sin(u.t * 2.4) * 0.7;
+      u.beam.material.opacity = 0.2 + Math.sin(u.t * 3) * 0.08;
     }
-    // --- race rivals + player checkpoints ---
-    if (this.race && !this.race.done) {
-      const r = this.race;
-      const cp = r.points[r.playerCp];
-      if (cp && Math.hypot(pos.x - cp.x, pos.z - cp.z) < 10) {
-        r.playerCp++;
-        audio.coin();
-        if (r.playerCp >= r.points.length) this.finishRace(1 + (r.finishedRivals || 0));
-      }
-      for (const rv of r.rivals) {
-        if (rv.cp >= r.points.length) continue;
-        const p = r.points[rv.cp];
-        const dx = p.x - rv.x, dz = p.z - rv.z;
-        const dist = Math.hypot(dx, dz);
-        const targetHeading = Math.atan2(dx, dz);
-        const steer = clamp(angleDiff(rv.heading, targetHeading) * 1.4, -1, 1);
-        rv.drive(dt, { throttle: 1, steer, handbrake: false }, this.city);
-        if (dist < 10) {
-          rv.cp++;
-          if (rv.cp >= r.points.length && !r.done) {
-            r.finishedRivals = (r.finishedRivals || 0) + 1;
-            this.finishRace(r.playerCp >= r.points.length ? 1 : r.finishedRivals + 1);
-          }
-        }
-      }
-    }
-    // --- taxi ---
-    this.taxiCooldown = Math.max(0, this.taxiCooldown - dt);
-    if (this.taxi) {
-      const tx = this.taxi;
-      if (tx.state === 'pickup') {
-        this.hooks.setObjective('Taxi fare', 'Pick up the passenger at the marker');
-        if (Math.hypot(pos.x - tx.x, pos.z - tx.z) < 6) {
-          tx.state = 'dropoff';
-          this.hooks.toast('Passenger aboard — take them to the marker');
-          audio.coin();
-        }
-      } else if (tx.state === 'dropoff') {
-        this.hooks.setObjective('Taxi fare', 'Drop the passenger at the marker');
-        if (Math.hypot(pos.x - tx.dx, pos.z - tx.dz) < 8) {
-          const fare = Math.round(40 + Math.hypot(tx.dx - tx.x, tx.dz - tx.z) * 0.35);
-          this.hooks.addCash(fare);
-          this.hooks.toast(`Fare paid: $${fare}`);
-          audio.missionDone();
-          this.taxi = null;
-          this.taxiCooldown = 20;
-        }
-      }
-    }
-    // --- coins ---
+    // Coins spin and get collected.
     for (const c of this.coins) {
-      if (c.taken) continue;
-      c.mesh.rotation.y += dt * 2;
-      c.mesh.position.y = 1.2 + Math.sin(t / 300 + c.x) * 0.3;
-      if (Math.hypot(pos.x - c.x, pos.z - c.z) < 2.4) {
-        c.taken = true;
-        this.scene.remove(c.mesh);
-        this.coinCount++;
-        this.hooks.addCash(50);
-        this.hooks.addRespect(1);
-        this.hooks.toast(`Solmar coin ${this.coinCount}/20 · +$50`);
-        audio.coin();
+      if (c.got) continue;
+      c.mesh.rotation.y += dt * 2.2;
+      c.mesh.position.y = 1.4 + Math.sin(performance.now() * 0.002 + c.x) * 0.15;
+      if (dist2(p.pos.x, p.pos.z, c.x, c.z) < 2.6) {
+        c.got = true;
+        c.mesh.visible = false;
+        this.coinsGot++;
+        this.cash += 50;
+        g.audio.coin();
+        this.say(`Solmar coin +$50 (${this.coinsGot}/20)`);
+        g.hud.refresh();
+      }
+    }
+    this.updateTaxi(dt);
+    if (this.done) return;
+    const near = (x, z, r = 7) => dist2(p.pos.x, p.pos.z, x, z) < r;
+
+    if (this.index === 0) {
+      if (this.stage === 0 && near(GARAGE.x, GARAGE.z, 8)) {
+        this.stage = 1;
+        this.setObjective('Mission 1 — First Wheels: get in the coupe');
+        this.say('There she is. Get in and drive to Mari\'s office.');
+        this.markedCar = new Car(this.scene, { color: 0x1c4fd6, type: 'coupe', x: GARAGE.x + 6, z: GARAGE.z, heading: Math.PI / 2 });
+        this.markedCar.marked = true;
+        g.parkedCars.push(this.markedCar); // enterable with E, like any parked car
+        this.setMarker(GARAGE.x + 6, GARAGE.z);
+      } else if (this.stage === 1 && p.car === this.markedCar) {
+        this.stage = 2;
+        this.setObjective('Mission 1 — First Wheels: drive to Mari\'s office');
+        this.setMarker(OFFICE.x, OFFICE.z);
+      } else if (this.stage === 2 && near(OFFICE.x, OFFICE.z, 8)) {
+        this.say('Mari: "Not bad, Rook. You drive clean. More work soon."');
+        this.completeMission(550, 10);
+      }
+    } else if (this.index === 1) {
+      if (this.stage === 0 && near(BANK.x, BANK.z, 8)) {
+        this.stage = 1;
+        this.waitT = 0;
+        this.setObjective('Mission 2 — The Getaway: the crew is loading in…');
+        this.say('Crew: "Go go go — we\'re in!"');
+      } else if (this.stage === 1) {
+        this.waitT += dt;
+        if (this.waitT > 3) {
+          this.stage = 2;
+          g.police.addWanted(2);
+          this.setObjective('Mission 2 — The Getaway: lose the heat, then reach the safehouse');
+          this.say('Sirens. Lose them, then get to the safehouse on the east side.');
+          this.setMarker(SAFEHOUSE.x, SAFEHOUSE.z);
+        }
+      } else if (this.stage === 2 && g.police.wanted === 0 && near(SAFEHOUSE.x, SAFEHOUSE.z, 8)) {
+        this.say('Mari: "Clean getaway. The crew is impressed."');
+        this.completeMission(1350, 15);
+      }
+    } else if (this.index === 2) {
+      if (this.stage === 0 && p.car === this.markedCar) {
+        this.stage = 1;
+        g.police.addWanted(1);
+        this.setObjective('Mission 3 — Repo Run: deliver the SUV to the docks');
+        this.say('That SUV is hot now. Get it to the docks, fast.');
+        this.setMarker(DOCKS.x, DOCKS.z);
+      } else if (this.stage === 1 && near(DOCKS.x, DOCKS.z, 8)) {
+        this.say('Mari: "Client paid up. The SUV is ours now."');
+        this.completeMission(1800, 15);
+      }
+    } else if (this.index === 3) {
+      if (this.stage === 0 && p.car === this.raceCar) {
+        this.stage = 1;
+        this.raceT = 0;
+        this.raceCp = 0;
+        this.setObjective('Mission 4 — Neon Nights: race the circuit — 4 checkpoints');
+        this.say('Race! Beat the rival crews through all 4 checkpoints.');
+        this.setRaceMarker();
+      } else if (this.stage === 1) {
+        this.raceT += dt;
+        const cps = [[132, -88], [132, 88], [-88, 88], [-88, -88]];
+        const [cx, cz] = cps[this.raceCp];
+        if (near(cx, cz, 9)) {
+          this.raceCp++;
+          g.audio.coin();
+          if (this.raceCp >= 4) {
+            const won = this.raceT < this.raceRivals[0];
+            if (won) {
+              this.say(`You won the race in ${this.raceT.toFixed(1)}s — the pier goes wild!`);
+              this.completeMission(2200, 20);
+            } else {
+              this.say(`Too slow (${this.raceT.toFixed(1)}s). The rivals take the purse — try again.`);
+              g.audio.fail();
+              this.stage = 0;
+              this.setMarker(PIER_START.x, PIER_START.z);
+              this.setObjective('Mission 4 — Neon Nights: get back in the race car');
+            }
+          } else {
+            this.setRaceMarker();
+          }
+        } else if (this.raceT > 120) {
+          this.say('Race over — too slow. Get back to the pier and try again.');
+          this.stage = 0;
+          this.setMarker(PIER_START.x, PIER_START.z);
+        }
+      }
+    } else if (this.index === 4) {
+      if (this.stage === 0 && near(CASINO.x, CASINO.z, 8)) {
+        this.stage = 1;
+        this.waitT = 0;
+        this.setObjective('Mission 5 — The Setup: grabbing the score…');
+        this.say('Inside. The vault crew is working. Thirty seconds…');
+      } else if (this.stage === 1) {
+        this.waitT += dt;
+        if (this.waitT > 3) {
+          this.stage = 2;
+          g.police.setWanted(4);
+          this.setObjective('Mission 5 — The Setup: IT\'S A SETUP — RUN! Mari tipped the cops!');
+          this.say('Mari, on the radio: "Sorry, Rook. Business." The cops are everywhere. RUN to the hideout!');
+          this.setMarker(HIDEOUT.x, HIDEOUT.z);
+        }
+      } else if (this.stage === 2 && near(HIDEOUT.x, HIDEOUT.z, 8)) {
+        this.say('You made it. Mari sold you out — Solmar will hear about it. The city is yours now.');
+        this.completeMission(3000, 20);
       }
     }
   }
-  finishRace(playerPlace) {
-    if (!this.race || this.race.done) return;
-    this.race.done = true;
-    this.race.place = playerPlace;
-  }
-  spawnRepoCar() {
-    if (this.repoCar) return;
-    const car = new Car(this.scene, 208, 104, 0, 0xe0b93c, { maxSpeed: 40, accel: 16 });
-    car.health = 100;
-    this.repoCar = car;
-  }
-  taxiTarget() {
-    if (!this.taxi) return null;
-    return this.taxi.state === 'pickup' ? { x: this.taxi.x, z: this.taxi.z } : { x: this.taxi.dx, z: this.taxi.dz };
+
+  setRaceMarker() {
+    const cps = [[132, -88], [132, 88], [-88, 88], [-88, -88]];
+    const [cx, cz] = cps[this.raceCp];
+    this.setMarker(cx, cz);
+    this.setObjective(`Mission 4 — Neon Nights: checkpoint ${this.raceCp + 1}/4 — ${this.raceT.toFixed(1)}s`);
   }
 }
