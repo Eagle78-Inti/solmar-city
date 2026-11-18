@@ -216,7 +216,7 @@ function updateCamera(dt) {
     camPos.y += rand(-1, 1) * G.shake * 0.3;
   }
   camera.position.copy(camPos);
-  camTarget.set(p.x + fx * 8, 1.4, p.z + fz * 8);
+  camTarget.set(p.x + fx * 8, 1.4 + (G.camLift || 0), p.z + fz * 8);
   camera.lookAt(camTarget);
 }
 

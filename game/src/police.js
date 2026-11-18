@@ -96,9 +96,9 @@ export function createPolice(scene, hooks) {
       if (P.bust > 3) { P.bust = 0; hooks.onBusted(); }
       if (P.heli) {
         P.orbit += dt * 0.45;
-        const hx = pp.x + Math.cos(P.orbit) * 22;
-        const hz = pp.z + Math.sin(P.orbit) * 22;
-        const hy = 20 + Math.sin(elapsed * 0.8) * 1.5;
+        const hx = pp.x + Math.cos(P.orbit) * 26;
+        const hz = pp.z + Math.sin(P.orbit) * 26;
+        const hy = 14 + Math.sin(elapsed * 0.8) * 1.5;
         P.heli.position.set(hx, hy, hz);
         P.heli.lookAt(pp.x, 0, pp.z);
         P.heli.userData.rotor.rotation.y += dt * 22;

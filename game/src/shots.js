@@ -30,6 +30,7 @@ export function stageShot(G, name) {
     G.teleportCar(60, 60, -Math.PI * 0.75);
     G.setWanted(4);
     G.police.orbit = Math.PI * 0.25;
+    G.camLift = 5;
     G.missions.override = "IT'S A SETUP — RUN!";
   }
   G.state = 'playing';
