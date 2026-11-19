@@ -6,61 +6,91 @@
 <title>Solmar City — an open-world crime game</title>
 <link rel="icon" href="data:,">
 <style>
-  html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1122; font-family: Arial, Helvetica, sans-serif; }
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #0b1220; font-family: Verdana, Geneva, sans-serif; }
   #app, #app canvas { position: fixed; inset: 0; display: block; }
-  .panel { position: fixed; background: rgba(10, 14, 22, 0.72); color: #fff; border-radius: 10px; padding: 10px 14px; z-index: 5; }
-  #hud-topleft { top: 12px; left: 12px; }
-  #hud-cash { font-size: 28px; font-weight: bold; line-height: 1; }
-  #hud-respect, #hud-coins { font-size: 12px; color: #ffd23c; letter-spacing: 1px; margin-top: 3px; }
-  #hud-coins { color: #9fd8ff; }
-  #hud-topright { top: 12px; right: 12px; text-align: right; }
-  #hud-stars { font-size: 22px; letter-spacing: 3px; line-height: 1; }
-  #hud-clock { font-size: 13px; color: #ffd23c; margin-top: 4px; letter-spacing: 1px; }
-  #hud-mission { font-size: 11px; color: #ff8aa0; letter-spacing: 1px; margin-top: 2px; }
-  #hud-objective { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(10, 14, 22, 0.72); color: #fff; border-radius: 10px; padding: 9px 18px; font-size: 14px; z-index: 5; max-width: 46vw; text-align: center; }
-  #hud-health { position: fixed; left: 14px; bottom: 170px; z-index: 5; color: #fff; font-size: 11px; letter-spacing: 2px; }
-  #hud-health-bar { width: 150px; height: 9px; background: rgba(255,255,255,0.2); border-radius: 5px; margin-top: 3px; overflow: hidden; }
-  #hud-health-fill { height: 100%; width: 100%; background: #e5484d; border-radius: 5px; }
-  #hud-minimap { position: fixed; left: 14px; bottom: 14px; width: 150px; height: 150px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.65); z-index: 5; background: #10181f; }
-  #hud-speed { position: fixed; right: 18px; bottom: 16px; color: #fff; font-size: 44px; font-weight: bold; text-align: right; z-index: 5; text-shadow: 0 2px 8px rgba(0,0,0,0.6); }
-  #hud-speed-unit { font-size: 13px; font-weight: normal; color: #cfe3ff; }
-  #hud-toast { position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%); background: rgba(10,14,22,0.8); color: #fff; padding: 9px 18px; border-radius: 10px; font-size: 14px; z-index: 6; opacity: 0; transition: opacity 0.3s; white-space: nowrap; }
-  #hud-banner { position: fixed; left: 50%; top: 30%; transform: translate(-50%, -50%); text-align: center; z-index: 7; opacity: 0; transition: opacity 0.4s; pointer-events: none; }
-  #hud-banner-title { font-size: 46px; font-weight: bold; color: #ffd23c; text-shadow: 0 3px 14px rgba(0,0,0,0.8); }
-  #hud-banner-sub { font-size: 18px; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,0.8); margin-top: 6px; }
-  #hud-crosshair { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); color: #fff; font-size: 26px; z-index: 5; display: none; text-shadow: 0 0 6px #000; pointer-events: none; }
-  .overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(6, 10, 20, 0.62); color: #fff; z-index: 10; text-align: center; }
-  .overlay h1 { font-size: 68px; margin: 0; letter-spacing: 4px; color: #ffd23c; text-shadow: 0 4px 24px rgba(0,0,0,0.8); }
-  .overlay h2 { font-size: 18px; font-weight: normal; color: #cfe3ff; margin: 10px 0 26px; }
-  .overlay .controls { font-size: 14px; line-height: 1.9; background: rgba(10,14,22,0.7); padding: 14px 26px; border-radius: 12px; }
-  .overlay .play { margin-top: 26px; font-size: 20px; font-weight: bold; color: #0a1122; background: #ffd23c; padding: 12px 34px; border-radius: 12px; cursor: pointer; }
-  #overlay-pause, #overlay-busted { display: none; }
+  .card { position: fixed; background: rgba(8, 12, 20, 0.68); color: #fff; border-radius: 12px; padding: 10px 14px; z-index: 5; box-shadow: 0 2px 12px rgba(0,0,0,0.35); }
+  #panel-stats { top: 12px; left: 12px; min-width: 130px; }
+  #money { font-size: 30px; font-weight: bold; line-height: 1.05; }
+  #respect-line { font-size: 12px; color: #ffd23c; letter-spacing: 1px; margin-top: 4px; }
+  #coin-line { font-size: 12px; color: #9fd8ff; letter-spacing: 1px; margin-top: 2px; }
+  #panel-wanted { top: 12px; right: 12px; text-align: right; min-width: 120px; }
+  #star-row { font-size: 24px; letter-spacing: 2px; line-height: 1; }
+  #clock-line { font-size: 13px; color: #ffd23c; margin-top: 5px; letter-spacing: 1px; }
+  #mission-line { font-size: 11px; color: #ff8aa0; letter-spacing: 1px; margin-top: 3px; }
+  #objective-bar { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(8,12,20,0.68); color: #fff; border-radius: 12px; padding: 10px 20px; font-size: 14px; z-index: 5; max-width: 44vw; text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,0.35); }
+  #health-wrap { position: fixed; left: 16px; bottom: 178px; z-index: 5; color: #fff; font-size: 11px; letter-spacing: 2px; text-shadow: 0 1px 4px rgba(0,0,0,0.7); }
+  #health-track { width: 150px; height: 10px; background: rgba(255,255,255,0.22); border-radius: 6px; margin-top: 4px; overflow: hidden; }
+  #health-fill { height: 100%; width: 100%; background: #e5484d; border-radius: 6px; }
+  #minimap { position: fixed; left: 14px; bottom: 14px; width: 150px; height: 150px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.7); z-index: 5; background: #10181f; box-shadow: 0 2px 12px rgba(0,0,0,0.4); }
+  #speed-wrap { position: fixed; right: 20px; bottom: 14px; color: #fff; text-align: right; z-index: 5; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
+  #speed-num { font-size: 48px; font-weight: bold; line-height: 1; }
+  #speed-label { font-size: 12px; color: #cfe3ff; letter-spacing: 2px; }
+  #toast { position: fixed; left: 50%; bottom: 108px; transform: translateX(-50%); background: rgba(8,12,20,0.82); color: #fff; padding: 10px 20px; border-radius: 12px; font-size: 14px; z-index: 6; opacity: 0; transition: opacity 0.3s; white-space: nowrap; }
+  #banner { position: fixed; left: 50%; top: 28%; transform: translate(-50%, -50%); text-align: center; z-index: 7; opacity: 0; transition: opacity 0.4s; pointer-events: none; }
+  #banner-head { font-size: 44px; font-weight: bold; color: #ffd23c; text-shadow: 0 3px 14px rgba(0,0,0,0.85); }
+  #banner-sub { font-size: 18px; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,0.85); margin-top: 8px; }
+  .overlay { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(160deg, rgba(10,18,36,0.92), rgba(40,20,50,0.88)); color: #fff; text-align: center; }
+  .overlay h1 { font-size: 64px; margin: 0; letter-spacing: 4px; color: #ffd23c; text-shadow: 0 4px 20px rgba(0,0,0,0.8); }
+  .overlay h2 { font-size: 20px; font-weight: normal; color: #cfe3ff; margin: 10px 0 26px; }
+  .overlay p { max-width: 560px; line-height: 1.6; color: #e8ecf2; margin: 0 0 22px; }
+  .overlay button { font-size: 18px; padding: 12px 30px; margin: 6px; border: none; border-radius: 10px; background: #ffd23c; color: #1a1a1a; font-weight: bold; cursor: pointer; }
+  .overlay button.secondary { background: #2e5fc2; color: #fff; }
+  .overlay button:hover { filter: brightness(1.12); }
+  #save-line { font-size: 13px; color: #9fd8ff; margin-bottom: 10px; }
+  .keys { font-size: 13px; color: #b8c4d4; line-height: 1.9; }
+  .keys b { color: #ffd23c; }
 </style>
-</head>
-<body>
-<div id="app"></div>
-<div class="panel" id="hud-topleft"><div id="hud-cash">$250</div><div id="hud-respect">RESPECT 0</div><div id="hud-coins">COINS 0/20</div></div>
-<div class="panel" id="hud-topright"><div id="hud-stars">☆☆☆☆☆</div><div id="hud-clock">13:30 · DAY</div><div id="hud-mission">MISSION 1/5</div></div>
-<div id="hud-objective">Meet the contact at Pier 7</div>
-<div id="hud-health">HEALTH<div id="hud-health-bar"><div id="hud-health-fill"></div></div></div>
-<canvas id="hud-minimap" width="180" height="180"></canvas>
-<div id="hud-speed">0<div id="hud-speed-unit">km/h · on foot</div></div>
-<div id="hud-toast"></div>
-<div id="hud-banner"><div id="hud-banner-title"></div><div id="hud-banner-sub"></div></div>
-<div id="hud-crosshair">+</div>
-<div class="overlay" id="overlay-start">
-  <h1>SOLMAR CITY</h1>
-  <h2>A getaway driver. A fixer named Mari Voss. One bay city that never sleeps.</h2>
-  <div class="controls">WASD — move / drive &nbsp;·&nbsp; SHIFT — sprint &nbsp;·&nbsp; SPACE — handbrake<br>E — steal / exit car &nbsp;·&nbsp; T — taxi job &nbsp;·&nbsp; CLICK — shoot &nbsp;·&nbsp; R — reset car &nbsp;·&nbsp; ESC — pause</div>
-  <div class="play" id="play-button">CLICK TO PLAY</div>
-</div>
-<div class="overlay" id="overlay-pause"><h1>PAUSED</h1><h2>Press ESC to keep playing. Your progress is saved after every mission.</h2></div>
-<div class="overlay" id="overlay-busted"><h1 id="overlay-busted-title">BUSTED</h1><h2 id="overlay-busted-sub"></h2><div class="play" id="busted-button">CLICK TO CONTINUE</div></div>
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.min.js" } }
 </script>
+</head>
+<body>
+<noscript><p style="color:#fff; padding: 40px; font-size: 18px;">Solmar City needs JavaScript to run — please enable it and reload.</p></noscript>
+<div id="app"></div>
+<div class="card" id="panel-stats">
+  <div id="money">$250</div>
+  <div id="respect-line">RESPECT 0</div>
+  <div id="coin-line">COINS 0/20</div>
+</div>
+<div class="card" id="panel-wanted">
+  <div id="star-row">☆☆☆☆☆</div>
+  <div id="clock-line">10:00 · DAY</div>
+  <div id="mission-line">MISSION 1/5</div>
+</div>
+<div id="objective-bar">Press M to start: First Job</div>
+<div id="health-wrap">
+  <div id="health-label">HEALTH</div>
+  <div id="health-track"><div id="health-fill"></div></div>
+</div>
+<canvas id="minimap" width="150" height="150"></canvas>
+<div id="speed-wrap"><div id="speed-num">0</div><div id="speed-label">KM/H</div></div>
+<div id="toast"></div>
+<div id="banner"><div id="banner-head"></div><div id="banner-sub"></div></div>
+<div class="overlay" id="screen-start">
+  <h1>SOLMAR CITY</h1>
+  <h2>An open-world crime game — drive, steal, run, get paid</h2>
+  <p>You are Rook, a getaway driver for the fixer Mari Voss. Steal cars, outrun the
+  police, finish five story missions, take taxi fares, race the pier and hunt
+  twenty Solmar coins across a living bay city.</p>
+  <div id="save-line"></div>
+  <div>
+    <button id="btn-start">▶ &nbsp;New game</button>
+    <button id="btn-continue" class="secondary">Continue</button>
+  </div>
+  <div class="keys">
+    <b>WASD</b> move / drive &nbsp;·&nbsp; <b>Shift</b> sprint &nbsp;·&nbsp; <b>Space</b> handbrake &nbsp;·&nbsp;
+    <b>E</b> enter / steal car &nbsp;·&nbsp; <b>Click / F</b> shoot &nbsp;·&nbsp; <b>M</b> mission &nbsp;·&nbsp;
+    <b>T</b> taxi &nbsp;·&nbsp; <b>R</b> reset car &nbsp;·&nbsp; <b>Esc</b> pause
+  </div>
+</div>
+<div class="overlay" id="screen-pause" style="display:none">
+  <h1>PAUSED</h1>
+  <h2>Solmar waits for no one — except right now</h2>
+  <div>
+    <button id="btn-resume">▶ &nbsp;Resume</button>
+    <button id="btn-save" class="secondary">Save game</button>
+  </div>
+</div>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
-
-<!-- Solmar City v4: every system above is original work, built for this bounty. -->

@@ -1,111 +1,106 @@
-// Solmar City v4 — combat: a hitscan pistol with a muzzle flash, pedestrians
-// who drop when hit, police cruisers that take damage, and return fire when
-// the heat is on.
-import * as THREE from 'three';
-import { rand } from './util.js';
+// Solmar City — combat: a hitscan pistol, police return fire at 2+ stars,
+// health, and getting dropped.
 
-export function createCombat(world) {
-  const ray = new THREE.Raycaster();
-  const center = new THREE.Vector2(0, 0);
-  const flash = new THREE.PointLight(0xffe9a0, 0, 18, 1.6);
-  world.scene.add(flash);
-  const C = {
-    cooldown: 0,
-    fireTimer: 1,
-    flashT: 0,
-    targets() {
-      const list = [];
-      for (const p of world.peds.list) if (p.alive) list.push(p.mesh);
-      for (const c of world.police.cars) if (!c.disabled) list.push(c.group);
-      return list;
-    },
-    shoot() {
-      if (C.cooldown > 0 || world.state !== 'playing') return false;
-      C.cooldown = 0.28;
-      world.audio.shot();
-      const cam = world.camera;
-      ray.setFromCamera(center, cam);
-      const hits = ray.intersectObjects(C.targets(), true);
-      flash.position.copy(cam.position).add(new THREE.Vector3(0, -0.2, 0));
-      flash.intensity = 26;
-      C.flashT = 0.06;
-      if (!hits.length) return true;
-      const hit = hits[0];
-      const targetSet = new Set(C.targets());
-      let obj = hit.object, ent = null, kind = null;
-      while (obj) {
-        if (targetSet.has(obj)) {
-          if (obj.userData && obj.userData.isPed) { ent = obj.userData.ref; kind = 'ped'; }
-          else { ent = obj.userData.ref; kind = 'police'; }
-          break;
-        }
-        obj = obj.parent;
-      }
-      if (kind === 'ped' && ent) {
-        world.peds.killAt({ x: hit.point.x, z: hit.point.z }, 2.5);
-        world.peds.fleeFrom(hit.point.x, hit.point.z, 22);
-        world.addWanted(1);
-        world.toast('You shot a pedestrian — the cops are coming.');
-      } else if (kind === 'police' && ent) {
-        ent.hits = (ent.hits || 0) + 1;
-        if (ent.hits >= 3) {
-          ent.disabled = true;
-          ent.speed = 0;
-          world.toast('Cruiser disabled.');
-        }
-        world.addWanted(1);
-      }
+import { dist2d, angleDiff } from './util.js';
+
+export function createCombat(THREE, scene, G, hooks) {
+  // hooks: { onShot(), onHitPed(), onPlayerHit(), onDeath(), addWanted(n) }
+  const tracers = [];
+  let fireTimer = 0;
+  let lastDamage = -99;
+  let time = 0;
+
+  function spawnTracer(from, to, color) {
+    const geo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(from.x, from.y, from.z),
+      new THREE.Vector3(to.x, to.y, to.z),
+    ]);
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }));
+    scene.add(line);
+    tracers.push({ line, life: 0.14 });
+  }
+
+  // Fire the pistol along a heading from a position. Hits the nearest
+  // pedestrian roughly in the line of fire, out to 45 units.
+  function shoot(fromPos, heading, peds, policeCars) {
+    hooks.onShot();
+    const fx = Math.sin(heading), fz = Math.cos(heading);
+    let best = null, bestD = 45;
+    for (const ped of peds.list) {
+      if (ped.down) continue;
+      const dx = ped.x - fromPos.x, dz = ped.z - fromPos.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 45 || d < 0.5) continue;
+      const ang = Math.abs(angleDiff(heading, Math.atan2(dx, dz)));
+      if (ang < 0.14 && d < bestD) { best = ped; bestD = d; }
+    }
+    const end = best
+      ? { x: best.x, y: 1.2, z: best.z }
+      : { x: fromPos.x + fx * 45, y: 1.2, z: fromPos.z + fz * 45 };
+    spawnTracer({ x: fromPos.x, y: 1.4, z: fromPos.z }, end, 0xffe9a0);
+    if (best) {
+      peds.knockDown(best.x, best.z, 2);
+      hooks.onHitPed();
+      hooks.addWanted(1);
       return true;
-    },
-    shootAt(x, y, z) {
-      if (C.cooldown > 0) return false;
-      C.cooldown = 0.28;
-      world.audio.shot();
-      const cam = world.camera;
-      const dir = new THREE.Vector3(x - cam.position.x, y - cam.position.y, z - cam.position.z).normalize();
-      ray.set(cam.position, dir);
-      const hits = ray.intersectObjects(C.targets(), true);
-      if (!hits.length) return true;
-      const hit = hits[0];
-      const targetSet = new Set(C.targets());
-      let obj = hit.object;
-      while (obj) {
-        if (targetSet.has(obj) && obj.userData && obj.userData.isPed) {
-          world.peds.killAt({ x: hit.point.x, z: hit.point.z }, 2.5);
-          world.peds.fleeFrom(hit.point.x, hit.point.z, 22);
-          world.addWanted(1);
-          return true;
-        }
-        obj = obj.parent;
+    }
+    // a shot near a cop is still a crime — and so is shooting a police car
+    for (const c of policeCars) {
+      if (dist2d(fromPos.x, fromPos.z, c.x, c.z) < 30) {
+        hooks.addWanted(1);
+        break;
       }
-      return true;
-    },
-    update(dt) {
-      C.cooldown = Math.max(0, C.cooldown - dt);
-      if (C.flashT > 0) {
-        C.flashT -= dt;
-        if (C.flashT <= 0) flash.intensity = 0;
+    }
+    return false;
+  }
+
+  function update(dt, playerPos, policeCars) {
+    time += dt;
+    for (let i = tracers.length - 1; i >= 0; i--) {
+      const t = tracers[i];
+      t.life -= dt;
+      t.line.material.opacity = Math.max(0, t.life / 0.14) * 0.9;
+      if (t.life <= 0) {
+        scene.remove(t.line);
+        t.line.geometry.dispose();
+        tracers.splice(i, 1);
       }
-      if (world.police.wanted >= 2 && world.state === 'playing') {
-        C.fireTimer -= dt;
-        if (C.fireTimer <= 0) {
-          C.fireTimer = rand(0.9, 1.6);
-          const pp = world.playerPos();
-          const near = world.police.cars.some((c) => {
-            const d = Math.hypot(c.group.position.x - pp.x, c.group.position.z - pp.z);
-            return d < 42;
-          });
-          if (near && Math.random() < 0.4) {
-            world.audio.shot();
-            world.damage(8);
-          }
+    }
+    // police return fire at 2+ stars
+    if (G.wanted >= 2 && policeCars.length > 0) {
+      fireTimer -= dt;
+      if (fireTimer <= 0) {
+        fireTimer = 1.1 + Math.random() * 0.5;
+        const near = policeCars.filter((c) => dist2d(c.x, c.z, playerPos.x, playerPos.z) < 42);
+        if (near.length > 0) {
+          const c = near[Math.floor(Math.random() * near.length)];
+          spawnTracer({ x: c.x, y: 1.4, z: c.z }, { x: playerPos.x, y: 1.3, z: playerPos.z }, 0xff5040);
+          damage(6);
         }
       }
-    },
-  };
-  return C;
+    }
+    // slow health regen once the shooting stops
+    if (time - lastDamage > 5 && G.health < 100) {
+      G.health = Math.min(100, G.health + 2.5 * dt);
+    }
+  }
+
+  function damage(n) {
+    G.health -= n;
+    lastDamage = time;
+    hooks.onPlayerHit();
+    if (G.health <= 0) {
+      G.health = 0;
+      hooks.onDeath();
+    }
+  }
+
+  return { shoot, update, damage };
 }
 
-export function combatHelpText() {
-  return 'Click to shoot the pistol. Police shoot back at 2 stars or more.';
+// True while cops are actively shooting at the player — the HUD uses it to
+// pulse the health bar.
+export function inFirefight(G, policeCars, playerPos) {
+  if (G.wanted < 2) return false;
+  return policeCars.some((c) => dist2d(c.x, c.z, playerPos.x, playerPos.z) < 42);
 }
