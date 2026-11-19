@@ -1,145 +1,83 @@
-// Solmar City — pedestrians: ~26 walkers on the sidewalks who scatter
-// when they hear a gunshot or a car comes at them fast.
+// Solmar City v7 — pedestrians: walkers on the sidewalks who stroll, wait
+// at corners, and run from gunfire and fast cars.
+import * as THREE from 'three';
+import { clamp, lerp, rand, randi, pick, angleLerp, dist2 } from './util.js';
 
-import { clamp, rand, randInt, pick, turnToward, dist2d } from './util.js';
+const SHIRTS = [0xd8d3c8, 0x4a6a9a, 0x9a4a4a, 0x4a9a5a, 0xc8a020, 0x7a4a9a, 0x3a3a3a, 0xe08a5a];
+const PANTS = [0x2a3a55, 0x3a3a3a, 0x5a4a3a, 0x2a4a3a];
 
-const SHIRTS = [0xd84a4a, 0x4a7dd8, 0x4ad87a, 0xd8c84a, 0x8a4ad8, 0xe8e8e8, 0x333333, 0xd88a4a];
-
-export function makePed(THREE, shirt) {
-  const g = new THREE.Group();
-  const shirtMat = new THREE.MeshStandardMaterial({ color: shirt, roughness: 0.9 });
-  const skin = new THREE.MeshStandardMaterial({ color: pick([0xc98e6a, 0x8a5a3a, 0xe8b890, 0x6a4a2a]), roughness: 0.8 });
-  const pants = new THREE.MeshStandardMaterial({ color: pick([0x2b2e33, 0x3a3a4a, 0x5a4a3a]), roughness: 0.95 });
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.75, 0.34), shirtMat);
-  torso.position.y = 1.05;
-  torso.castShadow = true;
-  g.add(torso);
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.4, 0.34), skin);
-  head.position.y = 1.62;
-  g.add(head);
-  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.7, 0.22), pants);
-  legL.geometry.translate(0, -0.35, 0);
-  legL.position.set(-0.16, 0.7, 0);
-  g.add(legL);
-  const legR = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.7, 0.22), pants);
-  legR.geometry.translate(0, -0.35, 0);
-  legR.position.set(0.16, 0.7, 0);
-  g.add(legR);
-  return { group: g, legL, legR };
+export function spawnPeds(G) {
+  G.peds = [];
+  const legGeo = new THREE.BoxGeometry(0.17, 0.72, 0.2);
+  const armGeo = new THREE.BoxGeometry(0.13, 0.55, 0.16);
+  for (let i = 0; i < 26; i++) {
+    const g = new THREE.Group();
+    const shirt = new THREE.MeshStandardMaterial({ color: pick(SHIRTS), roughness: 0.9 });
+    const pants = new THREE.MeshStandardMaterial({ color: pick(PANTS), roughness: 0.9 });
+    const skin = new THREE.MeshStandardMaterial({ color: pick([0xc89878, 0x8a5a3a, 0xe0b090, 0x6a4a30]), roughness: 0.7 });
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.58, 0.28), shirt);
+    torso.position.y = 1.06; torso.castShadow = true; g.add(torso);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 10, 8), skin);
+    head.position.y = 1.52; g.add(head);
+    const legs = [];
+    for (const s of [-1, 1]) {
+      const leg = new THREE.Mesh(legGeo, pants);
+      leg.position.set(s * 0.13, 0.36, 0); g.add(leg); legs.push(leg);
+      const arm = new THREE.Mesh(armGeo, shirt);
+      arm.position.set(s * 0.31, 1.08, 0); g.add(arm);
+    }
+    g.position.set(rand(-250, 250), 0, rand(-250, 250));
+    G.scene.add(g);
+    G.peds.push({ group: g, legs, tx: rand(-250, 250), tz: rand(-250, 250), speed: rand(1.2, 2.4), flee: 0, phase: rand(6) });
+  }
 }
 
-export function createPedestrians(THREE, scene, city, count) {
-  const list = [];
-  for (let k = 0; k < count; k++) {
-    const built = makePed(THREE, pick(SHIRTS));
-    scene.add(built.group);
-    const p = city.randomStreetPos();
-    const ped = {
-      built, x: p.x, z: p.z, heading: rand(0, Math.PI * 2),
-      speed: rand(1.2, 2.2), tx: p.x, tz: p.z,
-      flee: 0, fleeX: 0, fleeZ: 0, phase: rand(0, 6), down: false, downT: 0,
-    };
-    list.push(ped);
-    built.group.position.set(ped.x, 0, ped.z);
-  }
-
-  function update(dt, threats) {
-    for (const ped of list) {
-      if (ped.down) {
-        ped.downT += dt;
-        if (ped.downT > 6) {
-          ped.down = false;
-          ped.downT = 0;
-          ped.built.group.rotation.x = 0;
-          ped.built.group.position.y = 0;
-        }
-        continue;
+export function updatePeds(G, dt) {
+  const p = G.player;
+  for (const ped of G.peds) {
+    let tx = ped.tx, tz = ped.tz, sp = ped.speed;
+    // flee gunfire: ped.flee counts down from the last shot
+    if (ped.flee > 0) {
+      ped.flee -= dt;
+      const dx = ped.group.position.x - G.lastShot.x, dz = ped.group.position.z - G.lastShot.z;
+      const d = Math.hypot(dx, dz) || 1;
+      tx = ped.group.position.x + (dx / d) * 40; tz = ped.group.position.z + (dz / d) * 40; sp = 6.5;
+    } else if (p && p.car && Math.abs(p.car.speed) > 12) {
+      const d = dist2(ped.group.position.x, ped.group.position.z, p.pos.x, p.pos.z);
+      if (d < 100) {
+        const dx = ped.group.position.x - p.pos.x, dz = ped.group.position.z - p.pos.z;
+        const dd = Math.hypot(dx, dz) || 1;
+        tx = ped.group.position.x + (dx / dd) * 30; tz = ped.group.position.z + (dz / dd) * 30; sp = 5;
       }
-      // flee a gunshot or a fast car nearby
-      if (threats) {
-        for (const t of threats) {
-          const d = dist2d(ped.x, ped.z, t.x, t.z);
-          if (d < 16) {
-            ped.flee = 3;
-            ped.fleeX = ped.x - t.x;
-            ped.fleeZ = ped.z - t.z;
-          }
-        }
-      }
-      let tx, tz, speed;
-      if (ped.flee > 0) {
-        ped.flee -= dt;
-        const fl = Math.hypot(ped.fleeX, ped.fleeZ) || 1;
-        tx = ped.x + (ped.fleeX / fl) * 10;
-        tz = ped.z + (ped.fleeZ / fl) * 10;
-        speed = 6.5;
-      } else {
-        tx = ped.tx;
-        tz = ped.tz;
-        speed = ped.speed;
-        if (dist2d(ped.x, ped.z, tx, tz) < 3) {
-          const np = city.randomStreetPos();
-          ped.tx = np.x;
-          ped.tz = np.z;
-        }
-      }
-      const wantHeading = Math.atan2(tx - ped.x, tz - ped.z);
-      ped.heading = turnToward(ped.heading, wantHeading, 6 * dt);
-      ped.x += Math.sin(ped.heading) * speed * dt;
-      ped.z += Math.cos(ped.heading) * speed * dt;
-      ped.x = clamp(ped.x, -330, 250);
-      ped.z = clamp(ped.z, -330, 330);
-      ped.phase += dt * (ped.flee > 0 ? 12 : 7);
-      // keep walkers on the sidewalks: nudge them off the road centreline
-      const onRoadX = Math.abs(((ped.x + 8) % 74 + 74) % 74 - 8) < 6;
-      const onRoadZ = Math.abs(((ped.z + 8) % 74 + 74) % 74 - 8) < 6;
-      if (onRoadX && onRoadZ) {
-        ped.tx = ped.x + (ped.x >= 0 ? 12 : -12);
-        ped.tz = ped.z + (ped.z >= 0 ? 12 : -12);
-      }
-      ped.built.group.position.set(ped.x, 0, ped.z);
-      ped.built.group.rotation.y = ped.heading;
-      ped.built.legL.rotation.x = Math.sin(ped.phase) * 0.5;
-      ped.built.legR.rotation.x = -Math.sin(ped.phase) * 0.5;
     }
+    const dx = tx - ped.group.position.x, dz = tz - ped.group.position.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 3) { ped.tx = rand(-250, 250); ped.tz = rand(-250, 250); continue; }
+    const want = Math.atan2(dx, dz);
+    ped.group.rotation.y = angleLerp(ped.group.rotation.y, want, Math.min(1, dt * 5));
+    ped.group.position.x += Math.sin(ped.group.rotation.y) * sp * dt;
+    ped.group.position.z += Math.cos(ped.group.rotation.y) * sp * dt;
+    ped.group.position.x = clamp(ped.group.position.x, -265, 265);
+    ped.group.position.z = clamp(ped.group.position.z, -265, 265);
+    ped.phase += dt * sp * 2.4;
+    const sw = Math.sin(ped.phase) * 0.45;
+    ped.legs[0].rotation.x = sw; ped.legs[1].rotation.x = -sw;
   }
-
-  // Knock a pedestrian down (combat). Returns the ped, or null.
-  function knockDown(x, z, range) {
-    let best = null, bestD = range;
-    for (const ped of list) {
-      if (ped.down) continue;
-      const d = dist2d(ped.x, ped.z, x, z);
-      if (d < bestD) { best = ped; bestD = d; }
-    }
-    if (best) {
-      best.down = true;
-      best.downT = 0;
-      best.built.group.rotation.x = -Math.PI / 2;
-      best.built.group.position.y = 0.25;
-    }
-    return best;
-  }
-
-  function countStanding() {
-    return list.filter((p) => !p.down).length;
-  }
-
-  return { list, update, knockDown, countStanding };
 }
 
-// Move a few standing pedestrians near a point — used to stage a shot so
-// the street reads as alive in frame.
-export function scatterNear(peds, x, z, n) {
-  let placed = 0;
-  for (const ped of peds.list) {
-    if (placed >= n || ped.down) continue;
-    ped.x = x + rand(-3, 3);
-    ped.z = z + rand(-2.5, 2.5);
-    ped.tx = ped.x + rand(-20, 20);
-    ped.tz = ped.z + rand(-20, 20);
-    ped.built.group.position.set(ped.x, 0, ped.z);
-    placed++;
+export function scarePeds(G, x, z, radius = 45) {
+  for (const ped of G.peds) {
+    if (dist2(ped.group.position.x, ped.group.position.z, x, z) < radius * radius) ped.flee = 2.5;
   }
-  return placed;
 }
+
+export function nearestPed(G, x, z) {
+  let best = null, bd = Infinity;
+  for (const ped of G.peds) {
+    const d = dist2(x, z, ped.group.position.x, ped.group.position.z);
+    if (d < bd) { bd = d; best = ped; }
+  }
+  return best;
+}
+export function pedCount(G) { return G.peds.length; }
+export function pedPositions(G) { return G.peds.map((p) => [p.group.position.x, p.group.position.z]); }

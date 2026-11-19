@@ -1,244 +1,173 @@
-// Solmar City — the story: five missions for Rook, getaway driver for the
-// fixer Mari Voss, plus taxi jobs, Solmar coins and pier street races.
-
-import { dist2d } from './util.js';
-
-export const HIDEOUT = { x: -222, z: 222 };
-// Meet point beside Solmar Tower — outside its footprint, so the player can
-// actually stand on it (the tower itself is solid).
-export const TOWER = { x: 37, z: -62 };
+// Solmar City v7 — story: five missions for the fixer Mari Voss, with
+// cash and respect payouts and a twist in the last one, plus taxi jobs,
+// pier street races and 20 hidden coins.
+import * as THREE from 'three';
+import { clamp, rand, dist2 } from './util.js';
 
 export const MISSIONS = [
-  {
-    name: 'First Job',
-    brief: 'Mari Voss needs a driver. Pick up the package at the pier.',
-    payout: 550, respect: 10,
-    steps: [
-      { text: 'Pick up the package at the pier', x: 262, z: 0, radius: 16 },
-      { text: 'Deliver it to the hideout', x: HIDEOUT.x, z: HIDEOUT.z, radius: 12 },
-    ],
-  },
-  {
-    name: 'The Bank Job',
-    brief: 'Grab the bag from the bank on Meridian Row, then lose the heat.',
-    payout: 1350, respect: 15,
-    steps: [
-      { text: 'Reach the bank on Meridian Row', x: 111, z: 37, radius: 12 },
-      { text: 'Grab the bag — the cops are coming', x: 111, z: 37, radius: 10, wanted: 2 },
-      { text: 'Lose the heat — reach the hideout', x: HIDEOUT.x, z: HIDEOUT.z, radius: 12 },
-    ],
-  },
-  {
-    name: 'The Courier',
-    brief: 'Three drops across the city. No questions, no stops.',
-    payout: 1800, respect: 15,
-    steps: [
-      { text: 'Drop 1: the north market', x: -148, z: -148, radius: 12 },
-      { text: 'Drop 2: the marina flats', x: 148, z: 74, radius: 12 },
-      { text: 'Drop 3: the south docks', x: -74, z: 222, radius: 12 },
-      { text: 'Report back to the tower', x: TOWER.x, z: TOWER.z, radius: 12 },
-    ],
-  },
-  {
-    name: 'Pier Pressure',
-    brief: 'A street race down the pier road. Beat the checkpoints.',
-    payout: 2200, respect: 20,
-    steps: [
-      { text: 'Race checkpoint 1', x: 148, z: -148, radius: 14 },
-      { text: 'Race checkpoint 2', x: 148, z: 148, radius: 14 },
-      { text: 'Race checkpoint 3 — finish line', x: -148, z: 148, radius: 14 },
-    ],
-  },
-  {
-    name: 'The Setup',
-    brief: 'Meet Mari at the tower for the big one. Something feels wrong.',
-    payout: 3000, respect: 20,
-    steps: [
-      { text: 'Meet Mari at Solmar Tower', x: TOWER.x, z: TOWER.z, radius: 12 },
-      { text: "IT'S A SETUP — RUN!", x: HIDEOUT.x, z: HIDEOUT.z, radius: 12, wanted: 4 },
-    ],
-  },
+  { name: 'First Job', brief: 'Pick up the package at the pier and bring it to the garage.', pay: 550, respect: 10, steps: [{ x: 330, z: 0, r: 12, label: 'Reach the pier' }, { x: -60, z: -60, r: 12, label: 'Deliver to the garage' }] },
+  { name: 'The Bank Job', brief: 'Grab the getaway car, then lose the heat and reach the safehouse.', pay: 1350, respect: 15, steps: [{ x: 120, z: 120, r: 12, label: 'Steal the getaway car' }, { x: -240, z: 240, r: 14, label: 'Lose the cops — reach the safehouse' }] },
+  { name: 'Night Run', brief: 'Move the goods across town after dark. Stay fast, stay quiet.', pay: 1800, respect: 15, steps: [{ x: 240, z: -120, r: 12, label: 'Collect the goods' }, { x: -180, z: 180, r: 12, label: 'Deliver across town' }] },
+  { name: 'Pier Race', brief: 'Beat the rival crew down the pier road. Win and the crew pays.', pay: 2200, respect: 20, steps: [{ x: 300, z: -120, r: 14, label: 'Get to the start line' }, { x: 300, z: 120, r: 14, label: 'Race to the far pier' }] },
+  { name: 'The Setup', brief: 'Mari tipped the cops. It is a setup — run!', pay: 3000, respect: 20, twist: true, steps: [{ x: 0, z: 0, r: 12, label: 'Meet Mari downtown' }, { x: -240, z: 240, r: 14, label: "IT'S A SETUP — RUN!" }] },
 ];
 
-export function createMissions(G, hooks) {
-  // hooks: { onStep(text), onComplete(mission), onTwist(), setWanted(n), banner(title, sub) }
-  const state = { index: 0, step: 0, active: false, done: false, waypoint: null, objective: '' };
-
-  function current() {
-    return MISSIONS[state.index] || null;
-  }
-
-  function start() {
-    const m = current();
-    if (!m || state.active) return;
-    state.active = true;
-    state.step = 0;
-    applyStep();
-    hooks.banner('Mission ' + (state.index + 1) + ': ' + m.name, m.brief);
-  }
-
-  function applyStep() {
-    const m = current();
-    const s = m.steps[state.step];
-    state.waypoint = { x: s.x, z: s.z, radius: s.radius };
-    state.objective = s.text;
-    if (s.wanted) hooks.setWanted(s.wanted);
-    hooks.onStep(s.text);
-  }
-
-  function update(playerPos) {
-    if (!state.active || state.done) return;
-    const m = current();
-    if (!m || !state.waypoint) return;
-    if (dist2d(playerPos.x, playerPos.z, state.waypoint.x, state.waypoint.z) < state.waypoint.radius) {
-      state.step++;
-      if (state.step >= m.steps.length) {
-        complete(m);
-      } else {
-        if (state.index === 4 && state.step === 1) hooks.onTwist();
-        applyStep();
-      }
-    }
-  }
-
-  function complete(m) {
-    state.active = false;
-    G.cash += m.payout;
-    G.respect += m.respect;
-    // finishing a job cools the heat a little
-    if (hooks.coolWanted) hooks.coolWanted(1);
-    hooks.banner('Mission complete: ' + m.name, '+$' + m.payout.toLocaleString() + '  ·  +' + m.respect + ' respect');
-    hooks.onComplete(m);
-    state.index++;
-    state.waypoint = null;
-    state.objective = state.index < MISSIONS.length ? 'Press M to start: ' + MISSIONS[state.index].name : 'Story complete — Solmar is yours.';
-    if (state.index >= MISSIONS.length) state.done = true;
-  }
-
-  function objectiveText() {
-    if (state.active) return state.objective;
-    if (state.done) return 'Story complete — Solmar is yours.';
-    return 'Press M to start: ' + MISSIONS[state.index].name;
-  }
-
-  return { state, current, start, update, objectiveText };
+export function initMissions(G) {
+  G.missions = { index: 0, step: 0, done: false, marker: null, taxi: null, race: null };
+  const geo = new THREE.CylinderGeometry(1.6, 1.6, 0.25, 20);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffd23e, transparent: true, opacity: 0.75 });
+  const marker = new THREE.Mesh(geo, mat);
+  G.scene.add(marker);
+  G.missions.marker = marker;
+  spawnCoins(G);
 }
 
-// --- side activities: taxi jobs, Solmar coins, repeatable pier races ---
-
-export function createTaxi(G, city, hooks) {
-  const state = { active: false, phase: 0, px: 0, pz: 0, dx: 0, dz: 0, fare: 0, waypoint: null, objective: '' };
-  function toggle(playerPos) {
-    if (state.active) {
-      state.active = false;
-      state.waypoint = null;
-      hooks.toast('Taxi job cancelled');
-      return;
-    }
-    const p = city.randomStreetPos();
-    state.px = p.x;
-    state.pz = p.z;
-    state.phase = 0;
-    state.active = true;
-    state.waypoint = { x: p.x, z: p.z, radius: 12 };
-    state.objective = 'Taxi: pick up the fare';
-    hooks.toast('Taxi job: pick up the passenger');
+function spawnCoins(G) {
+  G.coins = [];
+  const geo = new THREE.TorusGeometry(0.7, 0.22, 10, 20);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffd23e, emissive: 0xcc8800, emissiveIntensity: 0.9, metalness: 0.9, roughness: 0.25 });
+  for (let i = 0; i < 20; i++) {
+    const c = new THREE.Mesh(geo, mat);
+    const onRoad = i % 2 === 0;
+    c.position.set(onRoad ? (Math.floor(rand(-4, 5)) * 60) + rand(-4, 4) : rand(-250, 250), 1.2, onRoad ? rand(-250, 250) : (Math.floor(rand(-4, 5)) * 60) + rand(-4, 4));
+    G.scene.add(c);
+    G.coins.push({ mesh: c, taken: false });
   }
-  function update(playerPos) {
-    if (!state.active || !state.waypoint) return;
-    if (dist2d(playerPos.x, playerPos.z, state.waypoint.x, state.waypoint.z) < state.waypoint.radius) {
-      if (state.phase === 0) {
-        const d = city.randomStreetPos();
-        state.dx = d.x;
-        state.dz = d.z;
-        const trip = Math.round(dist2d(state.px, state.pz, state.dx, state.dz));
-        state.fare = 120 + Math.round(trip * 0.35);
-        state.phase = 1;
-        state.waypoint = { x: state.dx, z: state.dz, radius: 12 };
-        state.objective = 'Taxi: drop off the passenger';
-        hooks.toast('Passenger aboard — take them to the marker');
-      } else {
-        G.cash += state.fare;
-        hooks.banner('Taxi fare paid', '+$' + state.fare);
-        hooks.onFare(state.fare);
-        state.active = false;
-        state.waypoint = null;
-        state.objective = '';
-      }
-    }
-  }
-  return { state, toggle, update };
 }
 
-// 20 glowing coins scattered around the city, $50 each.
-export function createCoins(THREE, scene, city) {
-  const coins = [];
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffd23c, emissive: 0xffb020, emissiveIntensity: 1.1, metalness: 0.8, roughness: 0.25 });
-  const geo = new THREE.CylinderGeometry(0.9, 0.9, 0.16, 18);
-  const spots = [];
-  for (let k = 0; k < 20; k++) {
-    const p = city.randomStreetPos();
-    spots.push(p);
-  }
-  for (const p of spots) {
-    const m = new THREE.Mesh(geo, mat);
-    m.position.set(p.x, 1.1, p.z);
-    scene.add(m);
-    coins.push({ mesh: m, x: p.x, z: p.z, taken: false, spin: Math.random() * 6 });
-  }
-  function update(dt, playerPos, onCoin) {
-    for (const c of coins) {
-      if (c.taken) continue;
-      c.spin += dt * 2.4;
-      c.mesh.rotation.y = c.spin;
-      c.mesh.position.y = 1.1 + Math.sin(c.spin * 1.6) * 0.25;
-      if (dist2d(playerPos.x, playerPos.z, c.x, c.z) < 2.2) {
-        c.taken = true;
-        c.mesh.visible = false;
-        onCoin(50);
-      }
-    }
-  }
-  function countTaken() {
-    return coins.filter((c) => c.taken).length;
-  }
-  return { coins, update, countTaken };
+export function currentMission(G) { return MISSIONS[G.missions.index]; }
+export function missionLabel(G) {
+  const m = currentMission(G);
+  if (!m) return 'All missions complete';
+  const s = m.steps[G.missions.step];
+  return s ? s.label : m.name;
 }
 
-// A quick repeatable race: drive onto the pier start marker, then hit the
-// three pier checkpoints in order for a $300 payout.
-export function createPierRace(G, hooks) {
-  const state = { active: false, step: 0, waypoint: null, objective: '' };
-  const START = { x: 300, z: -120 };
-  const CHECKS = [
-    { x: 380, z: -120, radius: 10 },
-    { x: 380, z: 120, radius: 10 },
-    { x: 300, z: 120, radius: 10 },
-  ];
-  function update(playerPos) {
-    if (!state.active) {
-      if (dist2d(playerPos.x, playerPos.z, START.x, START.z) < 10) {
-        state.active = true;
-        state.step = 0;
-        state.waypoint = CHECKS[0];
-        state.objective = 'Pier race: checkpoint 1';
-        hooks.toast('Pier race started — hit the checkpoints!');
-      }
-      return;
-    }
-    if (dist2d(playerPos.x, playerPos.z, state.waypoint.x, state.waypoint.z) < state.waypoint.radius) {
-      state.step++;
-      if (state.step >= CHECKS.length) {
-        G.cash += 300;
-        hooks.banner('Pier race won', '+$300');
-        state.active = false;
-        state.waypoint = null;
-        state.objective = '';
+export function updateMissions(G, dt) {
+  const M = G.missions;
+  const p = G.player;
+  // taxi jobs keep working even after the story is done
+  if (M.taxi) updateTaxi(G, dt);
+  if (M.done) { M.marker.visible = false; return; }
+  const m = currentMission(G);
+  const s = m.steps[M.step];
+  if (s) {
+    M.marker.visible = true;
+    M.marker.position.set(s.x, 0.4, s.z);
+    M.marker.rotation.y += dt * 1.5;
+    const d = dist2(p.pos.x, p.pos.z, s.x, s.z);
+    if (d < s.r * s.r) {
+      M.step++;
+      G.audio.step();
+      if (m.twist && M.step === 1) {
+        G.wanted = 4;
+        G.banner("IT'S A SETUP — RUN!", 'Mari tipped the cops');
+        G.audio.sirenBlip();
       } else {
-        state.waypoint = CHECKS[state.step];
-        state.objective = 'Pier race: checkpoint ' + (state.step + 1);
+        G.toast(s.label + ' — done');
       }
+      if (M.step >= m.steps.length) completeMission(G);
     }
   }
-  return { state, update, startPos: START };
+  // coins
+  for (const c of G.coins) {
+    if (c.taken) continue;
+    c.mesh.rotation.y += dt * 2;
+    c.mesh.position.y = 1.2 + Math.sin(G.elapsed * 2 + c.mesh.position.x) * 0.15;
+    if (dist2(p.pos.x, p.pos.z, c.mesh.position.x, c.mesh.position.z) < 4) {
+      c.taken = true; G.scene.remove(c.mesh);
+      p.cash += 50; p.coins++;
+      G.audio.coin(); G.toast('Coin +$50');
+      G.save();
+    }
+  }
+}
+
+function completeMission(G) {
+  const M = G.missions;
+  const m = currentMission(G);
+  const p = G.player;
+  p.cash += m.pay; p.respect += m.respect;
+  G.banner(`MISSION COMPLETE — ${m.name}`, `+$${m.pay.toLocaleString('en-US')}  ·  +${m.respect} respect`);
+  G.audio.win();
+  M.index++;
+  M.step = 0;
+  if (M.index >= MISSIONS.length) {
+    M.done = true;
+    G.banner('ALL MISSIONS COMPLETE', 'Solmar City is yours, Rook');
+  }
+  G.save();
+}
+
+export function startTaxi(G) {
+  const M = G.missions;
+  const p = G.player;
+  if (M.taxi) { G.toast('Taxi job cancelled'); M.taxi = null; return; }
+  let best = null, bd = 30 * 30;
+  for (const ped of G.peds) {
+    const d = dist2(p.pos.x, p.pos.z, ped.group.position.x, ped.group.position.z);
+    if (d < bd) { bd = d; best = ped; }
+  }
+  if (!best) { G.toast('No passenger nearby — drive closer to the sidewalk'); return; }
+  const dest = { x: (Math.floor(rand(-4, 5)) * 60), z: (Math.floor(rand(-4, 5)) * 60) };
+  M.taxi = { ped: best, dest, fare: 0, picked: false };
+  G.toast('Taxi job: pick up the passenger');
+  G.audio.taxi();
+}
+
+function updateTaxi(G, dt) {
+  const M = G.missions;
+  const t = M.taxi;
+  const p = G.player;
+  const target = t.picked ? t.dest : { x: t.ped.group.position.x, z: t.ped.group.position.z };
+  M.marker.visible = true;
+  M.marker.position.set(target.x, 0.4, target.z);
+  M.marker.rotation.y += dt * 1.5;
+  const d = dist2(p.pos.x, p.pos.z, target.x, target.z);
+  if (!t.picked && d < 36) {
+    t.picked = true;
+    G.toast('Passenger in — drive to the marker');
+  } else if (t.picked && d < 100) {
+    const fare = 120 + Math.floor(rand(60, 220));
+    p.cash += fare;
+    G.banner(`FARE PAID +$${fare}`, 'Nice driving, Rook');
+    G.audio.win();
+    M.taxi = null;
+    G.save();
+  }
+}
+
+// Pier sprint: outside missions, driving the full pier road (z -120 to
+// z +120 at x 300) in under 25 seconds pays a $150 bonus.
+export function checkPierSprint(G) {
+  const p = G.player;
+  if (!p.car) return;
+  const x = p.pos.x, z = p.pos.z;
+  if (!G.sprint) {
+    if (x > 295 && Math.abs(z + 120) < 12 && Math.abs(p.car.speed) > 5) G.sprint = { t: 0, from: -120 };
+  } else {
+    G.sprint.t += 1 / 60;
+    if (x > 295 && Math.abs(z - 120) < 12) {
+      if (G.sprint.t < 25) {
+        p.cash += 150;
+        G.banner('PIER SPRINT +$150', `${G.sprint.t.toFixed(1)}s down the pier road`);
+        G.audio.win();
+        G.save();
+      } else G.toast('Pier sprint too slow — try again');
+      G.sprint = null;
+    } else if (x < 280 || G.sprint.t > 40) G.sprint = null;
+  }
+}
+
+export function missionProgress(G) {
+  const M = G.missions;
+  if (M.done) return '5/5 complete';
+  return `Mission ${M.index + 1}/5 — step ${M.step + 1}/${currentMission(G).steps.length}`;
+}
+
+// Jump straight to a mission (debug / screenshot staging only).
+export function debugSetMission(G, index, step = 0) {
+  G.missions.index = Math.max(0, Math.min(MISSIONS.length - 1, index));
+  G.missions.step = step;
+  G.missions.done = false;
 }

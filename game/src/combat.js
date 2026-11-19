@@ -1,106 +1,115 @@
-// Solmar City — combat: a hitscan pistol, police return fire at 2+ stars,
-// health, and getting dropped.
+// Solmar City v7 — combat: hitscan pistol, muzzle flash, police return
+// fire at 2+ stars, and the health/bust consequences of a firefight.
+import * as THREE from 'three';
+import { clamp, rand, dist2 } from './util.js';
+import { scarePeds } from './pedestrians.js';
 
-import { dist2d, angleDiff } from './util.js';
-
-export function createCombat(THREE, scene, G, hooks) {
-  // hooks: { onShot(), onHitPed(), onPlayerHit(), onDeath(), addWanted(n) }
-  const tracers = [];
-  let fireTimer = 0;
-  let lastDamage = -99;
-  let time = 0;
-
-  function spawnTracer(from, to, color) {
-    const geo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(from.x, from.y, from.z),
-      new THREE.Vector3(to.x, to.y, to.z),
-    ]);
-    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }));
-    scene.add(line);
-    tracers.push({ line, life: 0.14 });
+export function shoot(G) {
+  const p = G.player;
+  if (G.shootCooldown > 0 || p.health <= 0) return;
+  G.shootCooldown = 0.28;
+  G.lastShot = { x: p.pos.x, z: p.pos.z };
+  G.audio.shot();
+  scarePeds(G, p.pos.x, p.pos.z);
+  // muzzle flash
+  const flash = new THREE.PointLight(0xffe9a0, 60, 12, 1.8);
+  flash.position.set(p.pos.x + Math.sin(p.heading) * 1.2, 1.4, p.pos.z + Math.cos(p.heading) * 1.2);
+  G.scene.add(flash);
+  G.flashes.push({ light: flash, t: 0.07 });
+  // hitscan: nearest ped or police in the aim cone
+  const aimX = Math.sin(p.heading), aimZ = Math.cos(p.heading);
+  let best = null, bestD = 55 * 55, bestKind = null;
+  for (const ped of G.peds) {
+    const dx = ped.group.position.x - p.pos.x, dz = ped.group.position.z - p.pos.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestD) {
+      const dot = (dx * aimX + dz * aimZ) / Math.max(1, Math.sqrt(d2));
+      if (dot > 0.86) { bestD = d2; best = ped; bestKind = 'ped'; }
+    }
   }
-
-  // Fire the pistol along a heading from a position. Hits the nearest
-  // pedestrian roughly in the line of fire, out to 45 units.
-  function shoot(fromPos, heading, peds, policeCars) {
-    hooks.onShot();
-    const fx = Math.sin(heading), fz = Math.cos(heading);
-    let best = null, bestD = 45;
-    for (const ped of peds.list) {
-      if (ped.down) continue;
-      const dx = ped.x - fromPos.x, dz = ped.z - fromPos.z;
-      const d = Math.hypot(dx, dz);
-      if (d > 45 || d < 0.5) continue;
-      const ang = Math.abs(angleDiff(heading, Math.atan2(dx, dz)));
-      if (ang < 0.14 && d < bestD) { best = ped; bestD = d; }
+  for (const c of G.police) {
+    const dx = c.group.position.x - p.pos.x, dz = c.group.position.z - p.pos.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestD) {
+      const dot = (dx * aimX + dz * aimZ) / Math.max(1, Math.sqrt(d2));
+      if (dot > 0.86) { bestD = d2; best = c; bestKind = 'cop'; }
     }
-    const end = best
-      ? { x: best.x, y: 1.2, z: best.z }
-      : { x: fromPos.x + fx * 45, y: 1.2, z: fromPos.z + fz * 45 };
-    spawnTracer({ x: fromPos.x, y: 1.4, z: fromPos.z }, end, 0xffe9a0);
-    if (best) {
-      peds.knockDown(best.x, best.z, 2);
-      hooks.onHitPed();
-      hooks.addWanted(1);
-      return true;
-    }
-    // a shot near a cop is still a crime — and so is shooting a police car
-    for (const c of policeCars) {
-      if (dist2d(fromPos.x, fromPos.z, c.x, c.z) < 30) {
-        hooks.addWanted(1);
-        break;
-      }
-    }
-    return false;
   }
-
-  function update(dt, playerPos, policeCars) {
-    time += dt;
-    for (let i = tracers.length - 1; i >= 0; i--) {
-      const t = tracers[i];
-      t.life -= dt;
-      t.line.material.opacity = Math.max(0, t.life / 0.14) * 0.9;
-      if (t.life <= 0) {
-        scene.remove(t.line);
-        t.line.geometry.dispose();
-        tracers.splice(i, 1);
-      }
+  if (best) {
+    if (bestKind === 'ped') {
+      G.scene.remove(best.group);
+      G.peds.splice(G.peds.indexOf(best), 1);
+      G.toast('Pedestrian down — the heat is on');
+    } else {
+      G.scene.remove(best.group);
+      G.police.splice(G.police.indexOf(best), 1);
+      G.toast('Police cruiser disabled');
     }
-    // police return fire at 2+ stars
-    if (G.wanted >= 2 && policeCars.length > 0) {
-      fireTimer -= dt;
-      if (fireTimer <= 0) {
-        fireTimer = 1.1 + Math.random() * 0.5;
-        const near = policeCars.filter((c) => dist2d(c.x, c.z, playerPos.x, playerPos.z) < 42);
-        if (near.length > 0) {
-          const c = near[Math.floor(Math.random() * near.length)];
-          spawnTracer({ x: c.x, y: 1.4, z: c.z }, { x: playerPos.x, y: 1.3, z: playerPos.z }, 0xff5040);
-          damage(6);
+    if (G.wanted < 5) G.wanted = Math.min(5, G.wanted + 1);
+  } else if (G.wanted < 2) {
+    G.wanted = Math.min(5, G.wanted + 1);
+  }
+  G.audio.echo();
+}
+
+export function updateCombat(G, dt) {
+  G.shootCooldown = Math.max(0, (G.shootCooldown || 0) - dt);
+  for (let i = G.flashes.length - 1; i >= 0; i--) {
+    const f = G.flashes[i];
+    f.t -= dt;
+    if (f.t <= 0) { G.scene.remove(f.light); G.flashes.splice(i, 1); }
+  }
+  // police return fire at 2+ stars
+  const p = G.player;
+  if (G.wanted >= 2 && p.health > 0) {
+    G.fireTimer = (G.fireTimer || 0) - dt;
+    if (G.fireTimer <= 0) {
+      G.fireTimer = rand(0.9, 1.6);
+      let near = null, nd = 40 * 40;
+      for (const c of G.police) {
+        const d = dist2(c.group.position.x, c.group.position.z, p.pos.x, p.pos.z);
+        if (d < nd) { nd = d; near = c; }
+      }
+      if (near && Math.random() < 0.42) {
+        p.health = Math.max(0, p.health - rand(6, 12));
+        G.audio.incoming();
+        G.toast('You are taking fire!');
+        if (p.health <= 0) {
+          p.cash = Math.max(0, p.cash - 150);
+          p.health = 100;
+          p.pos.set(-240, 0, 240); p.heading = Math.PI / 2;
+          if (p.car) { p.car = null; p.mesh.visible = true; }
+          p.mesh.position.copy(p.pos);
+          G.wanted = 0;
+          G.toast('Wasted — $150 hospital bill, back at the safehouse');
+          G.save();
         }
       }
     }
-    // slow health regen once the shooting stops
-    if (time - lastDamage > 5 && G.health < 100) {
-      G.health = Math.min(100, G.health + 2.5 * dt);
-    }
   }
-
-  function damage(n) {
-    G.health -= n;
-    lastDamage = time;
-    hooks.onPlayerHit();
-    if (G.health <= 0) {
-      G.health = 0;
-      hooks.onDeath();
-    }
-  }
-
-  return { shoot, update, damage };
+  if (p.health < 100) p.health = Math.min(100, p.health + dt * 1.2);
 }
 
-// True while cops are actively shooting at the player — the HUD uses it to
-// pulse the health bar.
-export function inFirefight(G, policeCars, playerPos) {
-  if (G.wanted < 2) return false;
-  return policeCars.some((c) => dist2d(c.x, c.z, playerPos.x, playerPos.z) < 42);
+// Damage the player directly (used by police rams that land hard).
+export function damagePlayer(G, amount) {
+  const p = G.player;
+  p.health = Math.max(0, p.health - amount);
+  G.audio.incoming();
+  if (p.health <= 0) {
+    p.cash = Math.max(0, p.cash - 150);
+    p.health = 100;
+    p.pos.set(-240, 0, 240); p.heading = Math.PI / 2;
+    if (p.car) { p.car = null; p.mesh.visible = true; }
+    p.mesh.position.copy(p.pos);
+    G.wanted = 0;
+    G.toast('Wasted — $150 hospital bill, back at the safehouse');
+    G.save();
+  }
+}
+
+// A warning shot in the air: scares peds without hurting anyone.
+export function warningShot(G) {
+  G.lastShot = { x: G.player.pos.x, z: G.player.pos.z };
+  G.audio.shot();
+  scarePeds(G, G.player.pos.x, G.player.pos.z, 30);
 }

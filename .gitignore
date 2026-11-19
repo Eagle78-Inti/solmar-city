@@ -1,9 +1,5 @@
-# Solmar City — files that never belong in the entry.
-# (Build output and dependencies stay out of the snapshot.)
-node_modules/
+# Solmar City v7 build output — never committed
 out/
+node_modules/
 .DS_Store
 *.log
-# local editor and OS leftovers
-.vscode/
-Thumbs.db
