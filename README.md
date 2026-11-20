@@ -1,56 +1,57 @@
-# Solmar City — an original open-world crime game
-
-[![make.fun](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01)
-[![rank](https://make.fun/badge/gta6-01/Eagle78-Inti/solmar-city/rank.svg)](https://make.fun/bounty/gta6-01)
-[![reward](https://make.fun/badge/gta6-01/Eagle78-Inti/solmar-city/reward.svg)](https://make.fun/bounty/gta6-01)
+# Solmar City v8 — an open-world crime game
 
 Solmar City is a complete open-world crime game that runs offline in desktop
-Chrome from static files — v7, richer and more detailed than ever. You play Rook, a getaway driver working for the
-fixer Mari Voss, in a sun-soaked bay city of your own — no names, art or
-music from any commercial game. Drive the streets, steal cars, outrun the
-police, work five story missions, take taxi fares, race the pier and hunt
-for coins, all under a full day/night cycle with a golden-hour dusk.
+Chrome from plain static files. Explore the city on foot or by car, steal
+cars, dodge the police, and work six story missions for the fixer Marta Reyes.
 
-## Play it
+## What's in v8
 
-Serve the `game/` folder with any static server, or run `node serve.ts`
-and open http://localhost:8080. Keyboard and mouse only.
+- **Six missions** — First Wheels, The Pickup, Harbor Run, Neon Heist, The
+  Setup, and the new Harbor Lights yacht job. Cash grows $800 → $2,150 →
+  $3,950 → $6,150 → $9,150 → $12,150 → $15,500; respect grows to 100.
+- **A helicopter you can actually see at night** — lit white body, bright
+  red/green nav lights, a blinking strobe, a rotor blur disc, its own
+  under-light and a searchlight cone that tracks you.
+- **A richer city** — the new Neon Mile district with glowing signage, varied
+  building palettes by district, palms on the beach, a marina with moored
+  yachts, and a day/night cycle with a golden-hour dusk.
+- **Two ways to earn between missions** — taxi fares and timed courier
+  deliveries with a fast bonus.
+- **The usual Solmar life** — traffic that follows the roads, pedestrians who
+  flee gunfire, a wanted level from 0 to 5 stars, police cars that chase and
+  ram, drivable boats on the bay, combat, a HUD with a live minimap, and
+  save/load through localStorage.
 
-- **WASD** move / drive, **Shift** sprint, **Space** handbrake, **R** reset car
-- **E** enter / exit a car (stealing one raises your wanted level)
-- **Mouse** aim, **click** shoot the pistol
-- **T** start a taxi job, **Esc** pause, progress saves automatically
+## Controls
 
-## What is in the city
+- W A S D — move / drive · Mouse drag — look around
+- E — enter / leave car or boat · Click — shoot (R reloads)
+- Shift — run · M — next mission · T — taxi fare · D — delivery job
+- P — pause · H — save game
 
-- A living grid city: traffic that follows lanes, pedestrians who flee
-  gunfire, police who chase, ram and bust, and a helicopter with a
-  searchlight at 4 stars and above.
-- Five story missions with cash and respect payouts, a twist in the last
-  one, plus taxi jobs, pier street races and 20 hidden coins.
-- A bay with animated water, a beach, three piers and the Solmar Tower.
-- Day/night cycle, neon streets, wet-road gloss after dark, and a HUD
-  with cash, respect, wanted stars, health, speed, a clock and a
-  circular minimap.
-- Synthesized sound only — engine, sirens, gunfire and music, all made
-  in code with WebAudio.
-
-## Build
-
-`main.ts` (Node 22, standard library only) copies `game/` and
-`screenshots/` to `/output` and writes `dossier.json`. Run it with:
+## Run it
 
 ```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+node serve.ts
+# open http://localhost:8080
 ```
 
-This repository is an entry for the
-[Make GTA 6](https://make.fun/bounty/gta6-01) bounty on
-[make.fun](https://make.fun). It is licensed MIT.
+The playtest harness is built in: open
+`http://localhost:8080/?autotest=1` and the game runs all six missions,
+the taxi and delivery jobs, driving, shooting, save/load and the helicopter
+checks, then writes a JSON report into the page for the harness to read.
+
+Hand it in with `mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts`.
+
+## Tech
+
+Three.js (vendored under `game/vendor/`), plain ES modules, no build step,
+no network requests, all sound synthesized with WebAudio. Everything is
+original: the city, characters, vehicles, story and art are our own.
 
 ## Screenshots
 
-The cover is a golden-hour dusk chase — Rook in the red getaway car,
-three police cruisers on his tail, the whole city glowing. The other
-shots show a daytime drive, Rook on foot at noon, and the final mission
-at night under the police helicopter's searchlight.
+`screenshots/` holds four renders of the game itself: a golden-hour police
+chase, a midday drive downtown, Leo on foot in Neon Mile, and the night
+mission under the helicopter's searchlight. They are taken with
+`?shot=chase|drive|foot|mission` in the browser, never edited.

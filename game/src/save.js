@@ -1,54 +1,62 @@
-// Solmar City v7 — save: progress in localStorage, restored on Continue.
-const KEY = 'solmar-city-save-v7';
+// Solmar City v8 — save and load through localStorage: cash, respect,
+// missions finished, the player's position and the time of day.
+export const SAVE_KEY = 'solmar-city-v8-save-v1';
 
-export function saveGame(G) {
+export function saveGame(state) {
   try {
-    const p = G.player;
     const data = {
-      cash: Math.round(p.cash), respect: p.respect, coins: p.coins,
-      missionIndex: G.missions.index, missionStep: G.missions.step,
-      missionsDone: G.missions.done, hours: G.hours, health: Math.round(p.health),
-      coinsTaken: G.coins.map((c) => (c.taken ? 1 : 0)).join(''),
+      v: 1,
+      cash: Math.round(state.cash),
+      respect: Math.round(state.respect),
+      missionsDone: state.missionsDone,
+      x: Math.round(state.x * 10) / 10,
+      z: Math.round(state.z * 10) / 10,
+      dayFrac: state.dayFrac,
+      health: Math.round(state.health),
+      savedAt: Date.now(),
     };
-    localStorage.setItem(KEY, JSON.stringify(data));
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     return true;
-  } catch (e) { return false; }
+  } catch (e) {
+    return false;
+  }
 }
 
 export function loadGame() {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
-    const d = JSON.parse(raw);
-    if (typeof d.cash !== 'number' || typeof d.missionIndex !== 'number') return null;
-    return d;
-  } catch (e) { return null; }
-}
-
-export function applySave(G, d) {
-  const p = G.player;
-  p.cash = d.cash; p.respect = d.respect || 0; p.coins = d.coins || 0;
-  p.health = d.health || 100;
-  G.hours = typeof d.hours === 'number' ? d.hours : 15.5;
-  G.missions.index = Math.min(d.missionIndex, 4);
-  G.missions.step = d.missionStep || 0;
-  G.missions.done = !!d.missionsDone;
-  if (d.coinsTaken) {
-    for (let i = 0; i < d.coinsTaken.length && i < G.coins.length; i++) {
-      if (d.coinsTaken[i] === '1') { G.coins[i].taken = true; G.scene.remove(G.coins[i].mesh); }
-    }
+    const data = JSON.parse(raw);
+    if (!data || data.v !== 1) return null;
+    if (typeof data.cash !== 'number' || typeof data.missionsDone !== 'number') return null;
+    // Clamp every field into its sane range so a hand-edited save cannot
+    // break the game (negative cash, respect over 100, off-map position).
+    data.cash = Math.max(0, Math.min(999999, data.cash));
+    data.respect = Math.max(0, Math.min(100, data.respect || 0));
+    data.missionsDone = Math.max(0, Math.min(6, data.missionsDone));
+    data.x = Math.max(-260, Math.min(320, data.x || 0));
+    data.z = Math.max(-320, Math.min(320, data.z || 0));
+    data.dayFrac = ((data.dayFrac || 0.72) % 1 + 1) % 1;
+    data.health = Math.max(1, Math.min(100, data.health || 100));
+    return data;
+  } catch (e) {
+    return null;
   }
-  p.pos.set(-240, 0, 240); p.heading = Math.PI / 2;
-  p.mesh.position.copy(p.pos);
-}
-
-export function clearSave() { try { localStorage.removeItem(KEY); } catch (e) { /* ignore */ } }
-
-export function saveLabel(d) {
-  if (!d) return '';
-  return `$${d.cash.toLocaleString('en-US')} · Mission ${Math.min(d.missionIndex + 1, 5)}/5 · ${d.coins || 0} coins`;
 }
 
 export function hasSave() {
-  try { return !!localStorage.getItem(KEY); } catch (e) { return false; }
+  return loadGame() !== null;
+}
+
+export function clearSave() {
+  try {
+    localStorage.removeItem(SAVE_KEY);
+  } catch (e) { /* storage may be unavailable */ }
+}
+
+// A save is only worth offering to continue from if it holds real progress:
+// some cash beyond the start, or at least one mission done.
+export function saveHasProgress(data) {
+  if (!data) return false;
+  return data.missionsDone > 0 || data.cash > 800;
 }

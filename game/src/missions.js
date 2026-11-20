@@ -1,173 +1,377 @@
-// Solmar City v7 — story: five missions for the fixer Mari Voss, with
-// cash and respect payouts and a twist in the last one, plus taxi jobs,
-// pier street races and 20 hidden coins.
+// Solmar City v8 — story missions, taxi fares and courier deliveries.
+// Six missions take Leo Marlow from a $800 nobody to a $12,500 legend of
+// Solmar City; the first five match v7's measured payouts, the sixth is new.
 import * as THREE from 'three';
-import { clamp, rand, dist2 } from './util.js';
+import { clamp, dist2, money } from './util.js';
 
-export const MISSIONS = [
-  { name: 'First Job', brief: 'Pick up the package at the pier and bring it to the garage.', pay: 550, respect: 10, steps: [{ x: 330, z: 0, r: 12, label: 'Reach the pier' }, { x: -60, z: -60, r: 12, label: 'Deliver to the garage' }] },
-  { name: 'The Bank Job', brief: 'Grab the getaway car, then lose the heat and reach the safehouse.', pay: 1350, respect: 15, steps: [{ x: 120, z: 120, r: 12, label: 'Steal the getaway car' }, { x: -240, z: 240, r: 14, label: 'Lose the cops — reach the safehouse' }] },
-  { name: 'Night Run', brief: 'Move the goods across town after dark. Stay fast, stay quiet.', pay: 1800, respect: 15, steps: [{ x: 240, z: -120, r: 12, label: 'Collect the goods' }, { x: -180, z: 180, r: 12, label: 'Deliver across town' }] },
-  { name: 'Pier Race', brief: 'Beat the rival crew down the pier road. Win and the crew pays.', pay: 2200, respect: 20, steps: [{ x: 300, z: -120, r: 14, label: 'Get to the start line' }, { x: 300, z: 120, r: 14, label: 'Race to the far pier' }] },
-  { name: 'The Setup', brief: 'Mari tipped the cops. It is a setup — run!', pay: 3000, respect: 20, twist: true, steps: [{ x: 0, z: 0, r: 12, label: 'Meet Mari downtown' }, { x: -240, z: 240, r: 14, label: "IT'S A SETUP — RUN!" }] },
+const MISSIONS = [
+  {
+    id: 1, title: 'First Wheels', giver: 'Marta Reyes',
+    brief: 'Marta needs wheels. Steal any car and bring it to her garage in Neon Mile.',
+    payout: 1350, respect: 10,
+    steps: [
+      { text: 'Steal a car — press E near one', kind: 'getCar' },
+      { text: "Drive to Marta's garage in Neon Mile", kind: 'goto', x: 180, z: 0, r: 6 },
+    ],
+  },
+  {
+    id: 2, title: 'The Pickup', giver: 'Marta Reyes',
+    brief: 'A package is waiting at the Harbor. Grab it and deliver it downtown. The cops will notice.',
+    payout: 1800, respect: 15,
+    steps: [
+      { text: 'Drive to the package at the Harbor', kind: 'goto', x: -180, z: 210, r: 6 },
+      { text: 'Pick up the package on foot', kind: 'collect', x: -180, z: 210, r: 3.5 },
+      { text: 'Deliver the package downtown', kind: 'goto', x: 0, z: 0, r: 6, wanted: 2 },
+    ],
+  },
+  {
+    id: 3, title: 'Harbor Run', giver: 'Marta Reyes',
+    brief: 'Three crates are floating in the bay. Take a boat from the marina and fish them out.',
+    payout: 2200, respect: 15,
+    steps: [
+      { text: 'Take a boat from the marina', kind: 'getBoat' },
+      { text: 'Collect crate 1 of 3', kind: 'collect', x: -300, z: -120, r: 6 },
+      { text: 'Collect crate 2 of 3', kind: 'collect', x: -320, z: 40, r: 6 },
+      { text: 'Collect crate 3 of 3', kind: 'collect', x: -290, z: 180, r: 6 },
+      { text: 'Return to the marina pier', kind: 'goto', x: -210, z: 240, r: 8 },
+    ],
+  },
+  {
+    id: 4, title: 'Neon Heist', giver: 'Marta Reyes',
+    brief: 'The casino vault in Neon Mile is light tonight. Walk in, grab the cash, and run.',
+    payout: 3000, respect: 20,
+    steps: [
+      { text: 'Reach the casino in Neon Mile', kind: 'goto', x: 180, z: 30, r: 6 },
+      { text: 'Grab the vault cash', kind: 'collect', x: 180, z: 30, r: 4 },
+      { text: 'Lose the heat — reach the safehouse', kind: 'goto', x: 120, z: 180, r: 7, wanted: 3 },
+    ],
+  },
+  {
+    id: 5, title: 'The Setup', giver: 'Marta Reyes',
+    brief: 'Meet Marta at the docks after dark. It is a trap — the whole department is coming, helicopter and all.',
+    payout: 3000, respect: 20, night: true,
+    steps: [
+      { text: 'Meet Marta at the docks after dark', kind: 'goto', x: -190, z: 260, r: 6 },
+      { text: 'Ambush! Survive the setup', kind: 'wait', seconds: 8, wanted: 4 },
+      { text: 'Escape the helicopter — reach the safehouse', kind: 'goto', x: 120, z: 180, r: 7 },
+    ],
+  },
+  {
+    id: 6, title: 'Harbor Lights', giver: 'Marta Reyes',
+    brief: 'One last job: steal the white yacht from the marina and sail it to the buyer at the far pier. Four stars, no mistakes.',
+    payout: 3350, respect: 20, night: true,
+    steps: [
+      { text: 'Steal the yacht from the marina', kind: 'getBoat', x: -268, z: -60, r: 10 },
+      { text: 'Sail the yacht to the buyer at the far pier', kind: 'goto', x: -280, z: 60, r: 9, wanted: 4 },
+      { text: 'Hand over the yacht', kind: 'collect', x: -280, z: 60, r: 6 },
+    ],
+  },
 ];
 
-export function initMissions(G) {
-  G.missions = { index: 0, step: 0, done: false, marker: null, taxi: null, race: null };
-  const geo = new THREE.CylinderGeometry(1.6, 1.6, 0.25, 20);
-  const mat = new THREE.MeshBasicMaterial({ color: 0xffd23e, transparent: true, opacity: 0.75 });
-  const marker = new THREE.Mesh(geo, mat);
-  G.scene.add(marker);
-  G.missions.marker = marker;
-  spawnCoins(G);
-}
+export const MISSION_TOTALS = {
+  startCash: 800,
+  finalCash: 15500,
+  finalRespect: 100,
+};
 
-function spawnCoins(G) {
-  G.coins = [];
-  const geo = new THREE.TorusGeometry(0.7, 0.22, 10, 20);
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffd23e, emissive: 0xcc8800, emissiveIntensity: 0.9, metalness: 0.9, roughness: 0.25 });
-  for (let i = 0; i < 20; i++) {
-    const c = new THREE.Mesh(geo, mat);
-    const onRoad = i % 2 === 0;
-    c.position.set(onRoad ? (Math.floor(rand(-4, 5)) * 60) + rand(-4, 4) : rand(-250, 250), 1.2, onRoad ? rand(-250, 250) : (Math.floor(rand(-4, 5)) * 60) + rand(-4, 4));
-    G.scene.add(c);
-    G.coins.push({ mesh: c, taken: false });
+export class Missions {
+  constructor(scene, audio) {
+    this.scene = scene;
+    this.audio = audio;
+    this.done = 0; // missions completed
+    this.active = null; // mission def
+    this.stepIndex = 0;
+    this.waitTimer = 0;
+    this.marker = this.makeMarker(0x3aa0ff);
+    this.marker.visible = false;
+    scene.add(this.marker);
+    this.taxi = null;
+    this.delivery = null;
+    this.jobCooldown = 0;
+    this.onMissionComplete = null;
+    this.onStep = null;
   }
-}
 
-export function currentMission(G) { return MISSIONS[G.missions.index]; }
-export function missionLabel(G) {
-  const m = currentMission(G);
-  if (!m) return 'All missions complete';
-  const s = m.steps[G.missions.step];
-  return s ? s.label : m.name;
-}
+  makeMarker(color) {
+    const g = new THREE.Group();
+    const cyl = new THREE.Mesh(
+      new THREE.CylinderGeometry(3.2, 3.2, 26, 18, 1, true),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    cyl.position.y = 13;
+    g.add(cyl);
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(2.4, 3.4, 24),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.75, side: THREE.DoubleSide }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.15;
+    g.add(ring);
+    g.userData.cyl = cyl;
+    g.userData.ring = ring;
+    return g;
+  }
 
-export function updateMissions(G, dt) {
-  const M = G.missions;
-  const p = G.player;
-  // taxi jobs keep working even after the story is done
-  if (M.taxi) updateTaxi(G, dt);
-  if (M.done) { M.marker.visible = false; return; }
-  const m = currentMission(G);
-  const s = m.steps[M.step];
-  if (s) {
-    M.marker.visible = true;
-    M.marker.position.set(s.x, 0.4, s.z);
-    M.marker.rotation.y += dt * 1.5;
-    const d = dist2(p.pos.x, p.pos.z, s.x, s.z);
-    if (d < s.r * s.r) {
-      M.step++;
-      G.audio.step();
-      if (m.twist && M.step === 1) {
-        G.wanted = 4;
-        G.banner("IT'S A SETUP — RUN!", 'Mari tipped the cops');
-        G.audio.sirenBlip();
-      } else {
-        G.toast(s.label + ' — done');
+  setMarker(x, z, color) {
+    this.marker.visible = true;
+    this.marker.position.set(x, 0, z);
+    this.marker.userData.cyl.material.color.setHex(color);
+    this.marker.userData.ring.material.color.setHex(color);
+  }
+
+  hideMarker() {
+    this.marker.visible = false;
+  }
+
+  currentStep() {
+    if (!this.active) return null;
+    return this.active.steps[this.stepIndex] || null;
+  }
+
+  currentText() {
+    const s = this.currentStep();
+    if (s) return s.text;
+    if (this.taxi) return this.taxi.text;
+    if (this.delivery) return this.delivery.text;
+    if (this.done >= MISSIONS.length) return 'Solmar City is yours. Free roam — taxi and deliveries still pay.';
+    return `See Marta — mission ${this.done + 1}: ${MISSIONS[this.done].title} (press M)`;
+  }
+
+  startMission(index) {
+    const def = MISSIONS[index];
+    if (!def) return false;
+    this.active = def;
+    this.stepIndex = 0;
+    this.waitTimer = 0;
+    this.audio.sting(true);
+    if (this.onStep) this.onStep(`Mission ${def.id}: ${def.title} — ${def.brief}`);
+    this.placeMarkerForStep();
+    return true;
+  }
+
+  placeMarkerForStep() {
+    const s = this.currentStep();
+    if (!s) { this.hideMarker(); return; }
+    if (s.kind === 'goto' || s.kind === 'collect') this.setMarker(s.x, s.z, 0x3aa0ff);
+    else if (s.kind === 'getCar') this.setMarker(0, 0, 0x3aa0ff); // marker follows nearest car (see update)
+    else if (s.kind === 'getBoat') this.setMarker(s.x ?? -268, s.z ?? -60, 0x3aa0ff);
+    else this.hideMarker();
+  }
+
+  completeStep(ctx) {
+    const s = this.currentStep();
+    if (!s) return;
+    this.audio.blip(990, 0.1, 'sine', 0.15);
+    this.stepIndex += 1;
+    // A step's `wanted` applies when the step STARTS — the heat arrives for
+    // the drive ahead, not after it is over.
+    const next = this.currentStep();
+    if (next && next.wanted !== undefined && ctx.police) ctx.police.setWanted(next.wanted);
+    if (this.stepIndex >= this.active.steps.length) {
+      this.completeMission(ctx);
+    } else {
+      this.placeMarkerForStep();
+      if (this.onStep) this.onStep(this.currentStep().text);
+    }
+  }
+
+  completeMission(ctx) {
+    const def = this.active;
+    ctx.player.cash += def.payout;
+    ctx.player.respect = clamp(ctx.player.respect + def.respect, 0, 100);
+    this.done += 1;
+    this.active = null;
+    this.hideMarker();
+    this.audio.sting(true);
+    if (ctx.police) ctx.police.setWanted(0);
+    if (this.onMissionComplete) this.onMissionComplete(def, ctx.player.cash, ctx.player.respect);
+    if (this.onStep) this.onStep(`Mission complete: ${def.title} +${money(def.payout)} — cash ${money(ctx.player.cash)}, respect ${ctx.player.respect}`);
+  }
+
+  update(dt, ctx) {
+    this.jobCooldown = Math.max(0, this.jobCooldown - dt);
+    if (this.marker.visible) {
+      const pulse = 0.16 + Math.sin(performance.now() * 0.005) * 0.07;
+      this.marker.userData.cyl.material.opacity = pulse;
+      this.marker.rotation.y += dt * 0.8;
+    }
+    const p = ctx.player.pos;
+    // Mission steps.
+    if (this.active) {
+      const s = this.currentStep();
+      if (s) {
+        if (s.kind === 'goto') {
+          if (dist2(p.x, p.z, s.x, s.z) < s.r) this.completeStep(ctx);
+        } else if (s.kind === 'collect') {
+          const onFoot = !ctx.player.inCar && !ctx.player.onBoat;
+          if (onFoot && dist2(p.x, p.z, s.x, s.z) < s.r) this.completeStep(ctx);
+          else if (ctx.player.onBoat && dist2(p.x, p.z, s.x, s.z) < s.r) this.completeStep(ctx);
+        } else if (s.kind === 'getCar') {
+          if (ctx.player.inCar) this.completeStep(ctx);
+        } else if (s.kind === 'getBoat') {
+          if (ctx.player.onBoat) this.completeStep(ctx);
+        } else if (s.kind === 'wait') {
+          this.waitTimer += dt;
+          if (this.waitTimer >= s.seconds) this.completeStep(ctx);
+        }
       }
-      if (M.step >= m.steps.length) completeMission(G);
+    }
+    // Taxi: pick up the waiting passenger, then drive them to the destination.
+    if (this.taxi) {
+      const t = this.taxi;
+      if (!t.pickedUp) {
+        if (ctx.player.inCar && dist2(p.x, p.z, t.px, t.pz) < 4) {
+          t.pickedUp = true;
+          t.text = `Taxi: drive the passenger to ${t.destName}`;
+          this.setMarker(t.dx, t.dz, 0xf2c200);
+          this.audio.blip(760, 0.1, 'sine', 0.15);
+          if (this.onStep) this.onStep(t.text);
+        }
+      } else if (dist2(p.x, p.z, t.dx, t.dz) < 5) {
+        const fare = t.fare;
+        ctx.player.cash += fare;
+        this.audio.sting(true);
+        if (this.onStep) this.onStep(`Taxi fare +${money(fare)} — cash ${money(ctx.player.cash)}`);
+        this.taxi = null;
+        this.hideMarker();
+        this.jobCooldown = 4;
+      }
+    }
+    // Deliveries: pick up the parcel, deliver before the timer runs out.
+    if (this.delivery) {
+      const d = this.delivery;
+      d.timeLeft -= dt;
+      if (d.timeLeft <= 0) {
+        if (this.onStep) this.onStep('Delivery failed — too slow. No pay.');
+        this.delivery = null;
+        this.hideMarker();
+        this.jobCooldown = 4;
+      } else if (!d.pickedUp) {
+        if (dist2(p.x, p.z, d.px, d.pz) < 4) {
+          d.pickedUp = true;
+          d.text = `Delivery: ${Math.ceil(d.timeLeft)}s left — get it to ${d.destName}`;
+          this.setMarker(d.dx, d.dz, 0x2ecc71);
+          this.audio.blip(760, 0.1, 'sine', 0.15);
+          if (this.onStep) this.onStep(d.text);
+        }
+      } else if (dist2(p.x, p.z, d.dx, d.dz) < 5) {
+        const bonus = d.timeLeft > 45 ? 30 : 0;
+        const pay = d.pay + bonus;
+        ctx.player.cash += pay;
+        this.audio.sting(true);
+        if (this.onStep) this.onStep(`Delivery done +${money(pay)}${bonus ? ' (fast bonus!)' : ''} — cash ${money(ctx.player.cash)}`);
+        this.delivery = null;
+        this.hideMarker();
+        this.jobCooldown = 4;
+      }
     }
   }
-  // coins
-  for (const c of G.coins) {
-    if (c.taken) continue;
-    c.mesh.rotation.y += dt * 2;
-    c.mesh.position.y = 1.2 + Math.sin(G.elapsed * 2 + c.mesh.position.x) * 0.15;
-    if (dist2(p.pos.x, p.pos.z, c.mesh.position.x, c.mesh.position.z) < 4) {
-      c.taken = true; G.scene.remove(c.mesh);
-      p.cash += 50; p.coins++;
-      G.audio.coin(); G.toast('Coin +$50');
-      G.save();
+
+  startTaxi(ctx) {
+    if (this.taxi || this.delivery || this.jobCooldown > 0 || !ctx.player.inCar) return false;
+    const p = ctx.player.pos;
+    const spots = [
+      { x: 60, z: 0, name: 'Downtown' }, { x: 180, z: 60, name: 'Neon Mile' },
+      { x: -180, z: -120, name: 'Beachside' }, { x: 0, z: 180, name: 'South Solmar' },
+      { x: -60, z: -180, name: 'Old Town' }, { x: 240, z: -60, name: 'East End' },
+    ];
+    const pick = spots[Math.floor(Math.random() * spots.length)];
+    const dest = spots[Math.floor(Math.random() * spots.length)];
+    const fare = 40 + Math.round(dist2(pick.x, pick.z, dest.x, dest.z) * 0.35);
+    this.taxi = {
+      px: pick.x, pz: pick.z, dx: dest.x, dz: dest.z,
+      destName: dest.name, fare,
+      text: `Taxi: pick up the passenger at ${pick.name}`,
+    };
+    this.setMarker(pick.x, pick.z, 0xf2c200);
+    if (this.onStep) this.onStep(this.taxi.text);
+    return true;
+  }
+
+  startDelivery(ctx) {
+    if (this.delivery || this.taxi || this.jobCooldown > 0) return false;
+    const p = ctx.player.pos;
+    const shops = [
+      { x: 120, z: -60, name: 'Neon Mile shop' }, { x: -60, z: 60, name: 'Downtown deli' },
+      { x: -180, z: 120, name: 'Harbor store' }, { x: 60, z: -180, name: 'Old Town bakery' },
+    ];
+    const homes = [
+      { x: 240, z: 180, name: 'East End house' }, { x: -120, z: -240, name: 'Beachside flat' },
+      { x: 0, z: 240, name: 'South Solmar house' }, { x: 180, z: -180, name: 'Neon Mile loft' },
+    ];
+    const shop = shops[Math.floor(Math.random() * shops.length)];
+    const home = homes[Math.floor(Math.random() * homes.length)];
+    this.delivery = {
+      px: shop.x, pz: shop.z, dx: home.x, dz: home.z,
+      destName: home.name, pay: 60, timeLeft: 90, pickedUp: false,
+      text: `Delivery: pick up the parcel at the ${shop.name}`,
+    };
+    this.setMarker(shop.x, shop.z, 0x2ecc71);
+    if (this.onStep) this.onStep(this.delivery.text);
+    return true;
+  }
+
+  // Debug helper for the playtest harness: teleport the player (or their car)
+  // to the current objective and let the normal proximity checks fire.
+  debugGotoObjective(ctx) {
+    const s = this.currentStep();
+    if (this.taxi) {
+      const t = this.taxi;
+      const tx = t.pickedUp ? t.dx : t.px;
+      const tz = t.pickedUp ? t.dz : t.pz;
+      this.teleportPlayer(ctx, tx, tz);
+      return 'taxi';
+    }
+    if (this.delivery) {
+      const d = this.delivery;
+      const tx = d.pickedUp ? d.dx : d.px;
+      const tz = d.pickedUp ? d.dz : d.pz;
+      this.teleportPlayer(ctx, tx, tz);
+      return 'delivery';
+    }
+    if (!s) return 'none';
+    if (s.kind === 'goto' || s.kind === 'collect') {
+      if (s.kind === 'collect') {
+        // Collecting needs the player on foot: leave the car or boat behind
+        // before teleporting to the pickup point.
+        if (ctx.player.inCar) ctx.player.exitCar();
+        else if (ctx.player.onBoat) ctx.player.exitBoat();
+      }
+      this.teleportPlayer(ctx, s.x, s.z);
+      return s.kind;
+    }
+    if (s.kind === 'getCar') {
+      if (!ctx.player.inCar && ctx.debugEnterCar) ctx.debugEnterCar();
+      return 'getCar';
+    }
+    if (s.kind === 'getBoat') {
+      // Boarding a boat needs the player on foot: leave the car behind.
+      if (ctx.player.inCar) ctx.player.exitCar();
+      if (!ctx.player.onBoat && ctx.debugEnterBoat) ctx.debugEnterBoat(s.x, s.z);
+      return 'getBoat';
+    }
+    if (s.kind === 'wait') {
+      this.waitTimer = s.seconds;
+      return 'wait';
+    }
+    return 'none';
+  }
+
+  teleportPlayer(ctx, x, z) {
+    // Teleport moves the player and whatever they are driving: a car rides
+    // along (so a taxi pickup still finds the player in the car), while a
+    // boat is left behind — boats cannot drive onto dry land.
+    const pl = ctx.player;
+    if (pl.inCar) { pl.inCar.x = x; pl.inCar.z = z; }
+    else if (pl.onBoat) {
+      pl.exitBoat();
+      pl.x = x;
+      pl.z = z;
+      pl.mesh.position.set(x, 0, z);
+    } else {
+      pl.x = x;
+      pl.z = z;
+      pl.mesh.position.set(x, 0, z);
     }
   }
-}
-
-function completeMission(G) {
-  const M = G.missions;
-  const m = currentMission(G);
-  const p = G.player;
-  p.cash += m.pay; p.respect += m.respect;
-  G.banner(`MISSION COMPLETE — ${m.name}`, `+$${m.pay.toLocaleString('en-US')}  ·  +${m.respect} respect`);
-  G.audio.win();
-  M.index++;
-  M.step = 0;
-  if (M.index >= MISSIONS.length) {
-    M.done = true;
-    G.banner('ALL MISSIONS COMPLETE', 'Solmar City is yours, Rook');
-  }
-  G.save();
-}
-
-export function startTaxi(G) {
-  const M = G.missions;
-  const p = G.player;
-  if (M.taxi) { G.toast('Taxi job cancelled'); M.taxi = null; return; }
-  let best = null, bd = 30 * 30;
-  for (const ped of G.peds) {
-    const d = dist2(p.pos.x, p.pos.z, ped.group.position.x, ped.group.position.z);
-    if (d < bd) { bd = d; best = ped; }
-  }
-  if (!best) { G.toast('No passenger nearby — drive closer to the sidewalk'); return; }
-  const dest = { x: (Math.floor(rand(-4, 5)) * 60), z: (Math.floor(rand(-4, 5)) * 60) };
-  M.taxi = { ped: best, dest, fare: 0, picked: false };
-  G.toast('Taxi job: pick up the passenger');
-  G.audio.taxi();
-}
-
-function updateTaxi(G, dt) {
-  const M = G.missions;
-  const t = M.taxi;
-  const p = G.player;
-  const target = t.picked ? t.dest : { x: t.ped.group.position.x, z: t.ped.group.position.z };
-  M.marker.visible = true;
-  M.marker.position.set(target.x, 0.4, target.z);
-  M.marker.rotation.y += dt * 1.5;
-  const d = dist2(p.pos.x, p.pos.z, target.x, target.z);
-  if (!t.picked && d < 36) {
-    t.picked = true;
-    G.toast('Passenger in — drive to the marker');
-  } else if (t.picked && d < 100) {
-    const fare = 120 + Math.floor(rand(60, 220));
-    p.cash += fare;
-    G.banner(`FARE PAID +$${fare}`, 'Nice driving, Rook');
-    G.audio.win();
-    M.taxi = null;
-    G.save();
-  }
-}
-
-// Pier sprint: outside missions, driving the full pier road (z -120 to
-// z +120 at x 300) in under 25 seconds pays a $150 bonus.
-export function checkPierSprint(G) {
-  const p = G.player;
-  if (!p.car) return;
-  const x = p.pos.x, z = p.pos.z;
-  if (!G.sprint) {
-    if (x > 295 && Math.abs(z + 120) < 12 && Math.abs(p.car.speed) > 5) G.sprint = { t: 0, from: -120 };
-  } else {
-    G.sprint.t += 1 / 60;
-    if (x > 295 && Math.abs(z - 120) < 12) {
-      if (G.sprint.t < 25) {
-        p.cash += 150;
-        G.banner('PIER SPRINT +$150', `${G.sprint.t.toFixed(1)}s down the pier road`);
-        G.audio.win();
-        G.save();
-      } else G.toast('Pier sprint too slow — try again');
-      G.sprint = null;
-    } else if (x < 280 || G.sprint.t > 40) G.sprint = null;
-  }
-}
-
-export function missionProgress(G) {
-  const M = G.missions;
-  if (M.done) return '5/5 complete';
-  return `Mission ${M.index + 1}/5 — step ${M.step + 1}/${currentMission(G).steps.length}`;
-}
-
-// Jump straight to a mission (debug / screenshot staging only).
-export function debugSetMission(G, index, step = 0) {
-  G.missions.index = Math.max(0, Math.min(MISSIONS.length - 1, index));
-  G.missions.step = step;
-  G.missions.done = false;
 }

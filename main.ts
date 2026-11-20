@@ -1,41 +1,63 @@
-// Solmar City v7 — "Make GTA 6" (gta6-01): hands the game in. Richer,
-// more detailed city than v6: detailed cars, varied buildings, neon
-// streets and a golden-hour dusk, with the same five-mission story.
-// Node 22, standard library only. Copies game/ + screenshots/ to /output
-// and writes /output/dossier.json with the vendored make.fun library.
-// Outside the grader, MAKEFUN_OUTPUT_DIR stands in for /output:
+// Solmar City v8 — the entry program (Node 22, standard library only).
+// It hands the game in: copies game/ and screenshots/ beside this file into
+// /output (or MAKEFUN_OUTPUT_DIR outside the grader) and writes
+// /output/dossier.json with the vendored make.fun library, exactly as the
+// scorer rebuilds it. Running it twice writes the same bytes both times.
+//
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-import { cpSync, existsSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs';
+
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const repoRoot = fileURLToPath(new URL('.', import.meta.url));
+const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
-mkdirSync(out, { recursive: true });
-cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+function fail(message) {
+  console.error('main.ts: ' + message);
+  process.exit(1);
+}
 
-// v7: refuse to hand in an entry with no screenshots — the judge reads the
-// game mostly through them, and an empty screenshots/ folder would sink it.
-const shots = existsSync(join(here, 'screenshots'))
-  ? readdirSync(join(here, 'screenshots')).filter((f) => !f.startsWith('.'))
-  : [];
-if (shots.length < 3) throw new Error(`Solmar City v7 needs at least 3 screenshots, found ${shots.length}`);
+function checkDir(path, label) {
+  if (!existsSync(path) || !statSync(path).isDirectory()) fail(`missing ${label} directory: ${path}`);
+}
 
-// The scorer's own caps: only text_max_bytes shapes the bytes; the others
-// refuse an entry the scorer would refuse (more than 4 screenshots or one
-// over 256 KiB; more than 993 files in game/ or 48 MiB of game files).
-writeFileSync(
-  join(out, 'dossier.json'),
-  buildDossier(out, {
-    text_max_bytes: 163840,
-    screenshots: { max: 4, max_bytes: 262144 },
-    game_max_files: 993,
-    game_max_bytes: 50331648,
-    game_path_max_bytes: 1000,
-  }),
-);
-console.log(`Solmar City v7 handed in: game/ + ${shots.length} screenshots -> ${out}`);
+function copyTree(from, to) {
+  rmSync(to, { recursive: true, force: true });
+  cpSync(from, to, { recursive: true });
+  // The copy must be a plain tree: no symlinks may reach /output.
+  const checkNoLinks = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) fail(`symlink in output tree: ${join(dir, entry.name)}`);
+      if (entry.isDirectory()) checkNoLinks(join(dir, entry.name));
+    }
+  };
+  checkNoLinks(to);
+}
+
+// The game and its screenshots must be beside this file.
+checkDir(join(repoRoot, 'game'), 'game');
+checkDir(join(repoRoot, 'screenshots'), 'screenshots');
+if (!existsSync(join(repoRoot, 'game', 'index.html'))) fail('game/index.html is missing');
+
+mkdirSync(outDir, { recursive: true });
+copyTree(join(repoRoot, 'game'), join(outDir, 'game'));
+copyTree(join(repoRoot, 'screenshots'), join(outDir, 'screenshots'));
+
+// The scorer's own caps: only text_max_bytes shapes the dossier bytes; the
+// others refuse an entry the scorer would refuse (more than 4 screenshots or
+// one over 256 KiB; more than 993 files in game/ or 48 MiB of game files, or
+// a path under game/ over 1000 bytes).
+const dossier = buildDossier(outDir, {
+  text_max_bytes: 163840,
+  screenshots: { max: 4, max_bytes: 262144 },
+  game_max_files: 993,
+  game_max_bytes: 50331648,
+  game_path_max_bytes: 1000,
+});
+writeFileSync(join(outDir, 'dossier.json'), dossier);
+console.log(`Solmar City v8 handed in: ${outDir} (dossier ${dossier.length} bytes)`);
+
+// Nothing else to hand in: the dossier is the whole summary the judge reads,
+// and the game plus its screenshots are already in /output.

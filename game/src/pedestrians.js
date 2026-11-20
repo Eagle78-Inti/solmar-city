@@ -1,83 +1,125 @@
-// Solmar City v7 — pedestrians: walkers on the sidewalks who stroll, wait
-// at corners, and run from gunfire and fast cars.
+// Solmar City v8 — pedestrians: simple people who stroll the sidewalks, cross
+// roads, and run from gunfire. They keep the streets alive and give the wanted
+// system something to react to.
 import * as THREE from 'three';
-import { clamp, lerp, rand, randi, pick, angleLerp, dist2 } from './util.js';
+import { clamp, dist2, mulberry32, pick } from './util.js';
+import { CITY } from './city.js';
 
-const SHIRTS = [0xd8d3c8, 0x4a6a9a, 0x9a4a4a, 0x4a9a5a, 0xc8a020, 0x7a4a9a, 0x3a3a3a, 0xe08a5a];
-const PANTS = [0x2a3a55, 0x3a3a3a, 0x5a4a3a, 0x2a4a3a];
+const SHIRTS = [0xe74c3c, 0x3498db, 0xf39c12, 0x9b59b6, 0x1abc9c, 0xecf0f1, 0xe67e22, 0x2ecc71];
+const PANTS = [0x2c3e50, 0x34495e, 0x7f8c8d, 0x5d4037, 0x1a1a1a];
 
-export function spawnPeds(G) {
-  G.peds = [];
-  const legGeo = new THREE.BoxGeometry(0.17, 0.72, 0.2);
-  const armGeo = new THREE.BoxGeometry(0.13, 0.55, 0.16);
-  for (let i = 0; i < 26; i++) {
-    const g = new THREE.Group();
-    const shirt = new THREE.MeshStandardMaterial({ color: pick(SHIRTS), roughness: 0.9 });
-    const pants = new THREE.MeshStandardMaterial({ color: pick(PANTS), roughness: 0.9 });
-    const skin = new THREE.MeshStandardMaterial({ color: pick([0xc89878, 0x8a5a3a, 0xe0b090, 0x6a4a30]), roughness: 0.7 });
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.58, 0.28), shirt);
-    torso.position.y = 1.06; torso.castShadow = true; g.add(torso);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 10, 8), skin);
-    head.position.y = 1.52; g.add(head);
-    const legs = [];
-    for (const s of [-1, 1]) {
-      const leg = new THREE.Mesh(legGeo, pants);
-      leg.position.set(s * 0.13, 0.36, 0); g.add(leg); legs.push(leg);
-      const arm = new THREE.Mesh(armGeo, shirt);
-      arm.position.set(s * 0.31, 1.08, 0); g.add(arm);
-    }
-    g.position.set(rand(-250, 250), 0, rand(-250, 250));
-    G.scene.add(g);
-    G.peds.push({ group: g, legs, tx: rand(-250, 250), tz: rand(-250, 250), speed: rand(1.2, 2.4), flee: 0, phase: rand(6) });
+export class Pedestrians {
+  constructor(scene, colliders) {
+    this.scene = scene;
+    this.colliders = colliders;
+    this.rng = mulberry32(4242);
+    this.peds = [];
+    this.group = new THREE.Group();
+    scene.add(this.group);
+    for (let i = 0; i < 30; i++) this.spawn(true);
   }
-}
 
-export function updatePeds(G, dt) {
-  const p = G.player;
-  for (const ped of G.peds) {
-    let tx = ped.tx, tz = ped.tz, sp = ped.speed;
-    // flee gunfire: ped.flee counts down from the last shot
-    if (ped.flee > 0) {
-      ped.flee -= dt;
-      const dx = ped.group.position.x - G.lastShot.x, dz = ped.group.position.z - G.lastShot.z;
-      const d = Math.hypot(dx, dz) || 1;
-      tx = ped.group.position.x + (dx / d) * 40; tz = ped.group.position.z + (dz / d) * 40; sp = 6.5;
-    } else if (p && p.car && Math.abs(p.car.speed) > 12) {
-      const d = dist2(ped.group.position.x, ped.group.position.z, p.pos.x, p.pos.z);
-      if (d < 100) {
-        const dx = ped.group.position.x - p.pos.x, dz = ped.group.position.z - p.pos.z;
-        const dd = Math.hypot(dx, dz) || 1;
-        tx = ped.group.position.x + (dx / dd) * 30; tz = ped.group.position.z + (dz / dd) * 30; sp = 5;
+  makeMesh() {
+    const g = new THREE.Group();
+    const shirt = new THREE.MeshLambertMaterial({ color: pick(this.rng, SHIRTS) });
+    const pants = new THREE.MeshLambertMaterial({ color: pick(this.rng, PANTS) });
+    const skin = new THREE.MeshLambertMaterial({ color: pick(this.rng, [0xe8b98a, 0xc98d5f, 0x8a5a3b, 0xf0c8a0]) });
+    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.8, 0.24), pants);
+    legs.position.y = 0.4;
+    g.add(legs);
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.62, 0.28), shirt);
+    torso.position.y = 1.1;
+    g.add(torso);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.32), skin);
+    head.position.y = 1.6;
+    g.add(head);
+    const hair = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.12, 0.34), new THREE.MeshLambertMaterial({ color: pick(this.rng, [0x1a1a1a, 0x4a2c0a, 0x888888, 0x2c1a0a]) }));
+    hair.position.y = 1.8;
+    g.add(hair);
+    g.userData.legs = legs;
+    return g;
+  }
+
+  spawn(anywhere = false) {
+    const rng = this.rng;
+    const mesh = this.makeMesh();
+    const onRoad = rng() < 0.5;
+    const line = Math.round((-240 + rng() * 480) / 60) * 60;
+    const along = -240 + rng() * 480;
+    const ped = {
+      mesh,
+      x: onRoad ? along : line + (rng() < 0.5 ? 8 : -8),
+      z: onRoad ? line + (rng() < 0.5 ? 8 : -8) : along,
+      heading: rng() * Math.PI * 2,
+      speed: 1.1 + rng() * 0.9,
+      walkPhase: rng() * 10,
+      flee: 0,
+      targetHeading: null,
+    };
+    mesh.position.set(ped.x, 0, ped.z);
+    mesh.rotation.y = ped.heading;
+    this.group.add(mesh);
+    this.peds.push(ped);
+    return ped;
+  }
+
+  scare(x, z, radius = 40) {
+    for (const p of this.peds) {
+      if (dist2(p.x, p.z, x, z) < radius) {
+        p.flee = 4 + Math.random() * 3;
+        p.targetHeading = Math.atan2(p.x - x, p.z - z);
       }
     }
-    const dx = tx - ped.group.position.x, dz = tz - ped.group.position.z;
-    const d = Math.hypot(dx, dz);
-    if (d < 3) { ped.tx = rand(-250, 250); ped.tz = rand(-250, 250); continue; }
-    const want = Math.atan2(dx, dz);
-    ped.group.rotation.y = angleLerp(ped.group.rotation.y, want, Math.min(1, dt * 5));
-    ped.group.position.x += Math.sin(ped.group.rotation.y) * sp * dt;
-    ped.group.position.z += Math.cos(ped.group.rotation.y) * sp * dt;
-    ped.group.position.x = clamp(ped.group.position.x, -265, 265);
-    ped.group.position.z = clamp(ped.group.position.z, -265, 265);
-    ped.phase += dt * sp * 2.4;
-    const sw = Math.sin(ped.phase) * 0.45;
-    ped.legs[0].rotation.x = sw; ped.legs[1].rotation.x = -sw;
+  }
+
+  update(dt, playerPos, dangerPos) {
+    for (const p of this.peds) {
+      if (p.flee > 0) {
+        p.flee -= dt;
+        p.heading = p.targetHeading;
+        p.speed = 3.4;
+      } else {
+        p.speed = 1.4;
+        if (Math.random() < dt * 0.08) p.targetHeading = Math.random() * Math.PI * 2;
+        if (p.targetHeading !== null) {
+          p.heading += clamp(p.targetHeading - p.heading, -dt * 2, dt * 2);
+          if (Math.abs(p.targetHeading - p.heading) < 0.1) p.targetHeading = null;
+        }
+      }
+      const nx = p.x + Math.sin(p.heading) * p.speed * dt;
+      const nz = p.z + Math.cos(p.heading) * p.speed * dt;
+      // Stay on land and out of buildings.
+      let blocked = nx < CITY.waterX + 4 || nx > CITY.maxX || nz < CITY.minZ || nz > CITY.maxZ;
+      if (!blocked) {
+        for (const b of this.colliders) {
+          if (nx > b.minX - 0.5 && nx < b.maxX + 0.5 && nz > b.minZ - 0.5 && nz < b.maxZ + 0.5) { blocked = true; break; }
+        }
+      }
+      if (!blocked) { p.x = nx; p.z = nz; }
+      else { p.heading += Math.PI / 2; p.targetHeading = null; }
+      p.walkPhase += dt * p.speed * 4;
+      p.mesh.position.set(p.x, Math.abs(Math.sin(p.walkPhase)) * 0.05, p.z);
+      p.mesh.rotation.y = p.heading;
+      p.mesh.userData.legs.rotation.x = Math.sin(p.walkPhase) * 0.3;
+      // Recycle far-away peds near the player so the streets stay populated.
+      // Respawn them ahead of the player's view, not on top of the player.
+      if (playerPos && dist2(p.x, p.z, playerPos.x, playerPos.z) > 320) {
+        this.group.remove(p.mesh);
+        const idx = this.peds.indexOf(p);
+        if (idx >= 0) this.peds.splice(idx, 1);
+        this.spawn();
+      }
+    }
   }
 }
 
-export function scarePeds(G, x, z, radius = 45) {
-  for (const ped of G.peds) {
-    if (dist2(ped.group.position.x, ped.group.position.z, x, z) < radius * radius) ped.flee = 2.5;
-  }
-}
-
-export function nearestPed(G, x, z) {
-  let best = null, bd = Infinity;
-  for (const ped of G.peds) {
-    const d = dist2(x, z, ped.group.position.x, ped.group.position.z);
-    if (d < bd) { bd = d; best = ped; }
+// Nearest pedestrian to a point, for the "run over" check and the taxi pickup.
+export function nearestPed(peds, x, z, maxDist = 6) {
+  let best = null;
+  let bestD = maxDist;
+  for (const p of peds.peds) {
+    const d = dist2(p.x, p.z, x, z);
+    if (d < bestD) { bestD = d; best = p; }
   }
   return best;
 }
-export function pedCount(G) { return G.peds.length; }
-export function pedPositions(G) { return G.peds.map((p) => [p.group.position.x, p.group.position.z]); }

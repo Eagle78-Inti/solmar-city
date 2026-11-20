@@ -1,78 +1,119 @@
-// Solmar City v7 — screenshot staging: URL presets (?shot=chase|drive|
-// foot|mission) that set time of day, wanted level, positions and the
-// helicopter so each screenshot shows several systems at once.
-import { setWanted } from './player.js';
-import { debugSetMission, MISSIONS } from './missions.js';
-import { spawnHeli, spawnPolice } from './police.js';
+// Solmar City v8 — screenshot staging: each shot name arranges the world
+// (time of day, player vehicle, wanted level, police, helicopter) and picks a
+// camera, so screenshots are real renders of the game, never composites.
+import { CITY } from './city.js';
 
-export const SHOT_PRESETS = {
-  chase: { hours: 17.6, wanted: 3, mission: 1, step: 1, car: true, pos: [0, -40], heading: 0, speed: 9 },
-  drive: { hours: 15.5, wanted: 0, mission: 0, step: 0, car: true, pos: [60, 120], heading: 0, speed: 7 },
-  foot: { hours: 12, wanted: 0, mission: 0, step: 0, car: false, pos: [-30, 60], heading: Math.PI * 0.75 },
-  mission: { hours: 23.2, wanted: 4, mission: 4, step: 1, car: true, pos: [-60, 60], heading: Math.PI, speed: 4 },
-};
+export const SHOT_NAMES = ['chase', 'drive', 'foot', 'mission'];
 
-export function applyShotPreset(G, name) {
-  const pr = SHOT_PRESETS[name];
-  if (!pr) return false;
-  G.hours = pr.hours;
-  debugSetMission(G, pr.mission, pr.step);
-  const _mis = MISSIONS[pr.mission];
-  if (_mis && _mis.steps[pr.step] && _mis.steps[pr.step].twist) {
-    G.banner("IT'S A SETUP — RUN!", 'Mari sold you out — lose the cops and reach the hideout');
-  }
-  const p = G.player;
-  if (pr.car) {
-    if (!p.car) {
-      // stage a car under the player: take the nearest parked one
-      let best = null, bd = Infinity;
-      for (const pk of G.parked) {
-        if (pk.stolen) continue;
-        const d = (pk.x - pr.pos[0]) ** 2 + (pk.z - pr.pos[1]) ** 2;
-        if (d < bd) { bd = d; best = pk; }
+export function stageShot(name, ctx) {
+  const { player, police, traffic, peds, setDayFrac } = ctx;
+  // Clear any previous staging.
+  police.clear();
+  ctx.shotCamera = null;
+  ctx.freezeTime = true;
+  if (player.inCar) player.exitCar();
+  if (player.onBoat) player.exitBoat();
+
+  if (name === 'chase') {
+    // Golden-hour dusk, car moving at speed, 3 stars, police on the tail.
+    setDayFrac(0.74);
+    ctx.spawnPlayerCar(0, -40, 0, 42);
+    player.camYaw = 0;
+    police.setWanted(3);
+    police.update(0.01, player, false, null, null);
+    // Place the pursuit cars behind the player's car — and two more AHEAD
+    // of it, in the next lanes, so the chase reads in the frame: the follow
+    // camera looks forward, and cars behind it are never seen.
+    police.cars.forEach((c, i) => {
+      if (i < 2) {
+        c.x = -4 + i * 8;
+        c.z = -40 + 26 + i * 16;
+        c.heading = 0;
+        c.speed = 34;
+      } else {
+        c.x = -6 + (i - 2) * 6;
+        c.z = -40 - 22 - (i - 2) * 9;
+        c.heading = 0;
+        c.speed = 30;
       }
-      if (best) {
-        best.stolen = true;
-        p.car = { group: best.group, speed: pr.speed || 0, heading: pr.heading };
-        p.mesh.visible = false;
-        G.ownCar = p.car;
-      }
-    }
-    if (p.car) {
-      p.car.group.position.set(pr.pos[0], 0, pr.pos[1]);
-      p.car.heading = pr.heading;
-      p.car.speed = pr.speed || 0;
-      p.car.group.rotation.y = pr.heading;
-      p.pos.copy(p.car.group.position);
-      p.heading = pr.heading;
-    }
-  } else {
-    p.pos.set(pr.pos[0], 0, pr.pos[1]);
-    p.heading = pr.heading;
-    p.mesh.position.copy(p.pos);
-    p.mesh.visible = true;
-  }
-  setWanted(G, pr.wanted);
-  // police cruisers in frame for the chase / mission shots
-  if (pr.wanted >= 1) {
-    spawnPolice(G, pr.wanted >= 4 ? 6 : 3);
-    G.police.forEach((c, i) => {
-      const a = (i / G.police.length) * Math.PI * 2 + 0.4;
-      c.group.position.set(p.pos.x + Math.sin(a) * 14, 0, p.pos.z + Math.cos(a) * 14);
-      c.heading = Math.atan2(p.pos.x - c.group.position.x, p.pos.z - c.group.position.z);
-      c.group.rotation.y = c.heading;
     });
+    ctx.shotCamera = null; // follow camera behind the car
+    return 'chase staged: golden hour, 3 stars, pursuit behind';
   }
-  if (pr.wanted >= 4 && !G.heli) spawnHeli(G);
-  // stage the heli ahead of the player, low, so it is clearly in frame
-  if (G.heli && name === 'mission') {
-    G.heli.angle = -Math.PI / 2;
-    G.heli.orbitR = 30;
-    G.heli.height = 10;
+
+  if (name === 'drive') {
+    // Bright midday drive through Downtown with traffic around.
+    setDayFrac(0.42);
+    ctx.spawnPlayerCar(60, 60, Math.PI / 2, 30);
+    player.camYaw = Math.PI / 2;
+    police.setWanted(0);
+    return 'drive staged: midday Downtown, traffic';
   }
-  G.camAngle = p.heading;
-  return true;
+
+  if (name === 'foot') {
+    // On foot in Neon Mile at dusk: neon signs lit, pedestrians around.
+    setDayFrac(0.72);
+    player.x = 180;
+    player.z = 20;
+    player.heading = Math.PI / 2;
+    player.camYaw = Math.PI / 2;
+    player.mesh.visible = true;
+    player.mesh.position.set(player.x, 0, player.z);
+    police.setWanted(0);
+    for (let i = 0; i < 6; i++) {
+      const ped = peds.peds[i];
+      if (ped) {
+        ped.x = 168 + i * 5;
+        ped.z = 14 + (i % 3) * 6;
+      }
+    }
+    // Wide camera: Leo centre-frame with the neon towers behind him.
+    ctx.shotCamera = {
+      pos: [164, 7, 2],
+      look: [192, 2, 26],
+    };
+    return 'foot staged: Neon Mile at dusk, on foot';
+  }
+
+  if (name === 'mission') {
+    // Night, 4 stars, helicopter overhead with its searchlight on the player.
+    setDayFrac(0.95);
+    ctx.spawnPlayerCar(-190, 250, Math.PI, 0);
+    player.camYaw = Math.PI;
+    police.setWanted(4);
+    police.update(0.01, player, true, null, null);
+    const heli = police.helis[0];
+    if (heli) {
+      heli.angle = Math.PI * 0.75;
+      heli.radius = 24;
+      heli.height = 22;
+      heli.x = player.pos.x + Math.sin(heli.angle) * heli.radius;
+      heli.z = player.pos.z + Math.cos(heli.angle) * heli.radius;
+      heli.group.position.set(heli.x, heli.height, heli.z);
+      // Wide camera: the player car below, the lit helicopter above it.
+      ctx.shotCamera = {
+        pos: [player.pos.x + 26, 20, player.pos.z - 34],
+        look: [(player.pos.x + heli.x) / 2, 8, (player.pos.z + heli.z) / 2],
+      };
+    }
+    // A couple of police cars closing in on the docks road.
+    police.cars.forEach((c, i) => {
+      c.x = -190 + (i - 1) * 12;
+      c.z = 250 - 30 - i * 8;
+      c.heading = 0;
+      c.speed = 24;
+    });
+    return 'mission staged: night, 4 stars, helicopter searchlight';
+  }
+
+  return 'unknown shot: ' + name;
 }
 
-export function shotNames() { return Object.keys(SHOT_PRESETS); }
-export function shotPreset(name) { return SHOT_PRESETS[name] || null; }
+// The screenshot presets used by the local playtest: file names and the
+// staging name each one uses, in the order they appear in screenshots/.
+export const SHOT_FILES = [
+  { file: 'chase.jpg', shot: 'chase' },
+  { file: 'drive.jpg', shot: 'drive' },
+  { file: 'foot.jpg', shot: 'foot' },
+  { file: 'mission.jpg', shot: 'mission' },
+];

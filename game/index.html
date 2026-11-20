@@ -2,70 +2,89 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<link rel="icon" href="data:,">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Solmar City — an original open-world crime game in the browser: steal cars, outrun the police, work five story missions.">
-<title>Solmar City — an original open-world crime game</title>
+<title>Solmar City — an open-world crime game</title>
 <style>
-  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0a0e1a;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#fff}
-  #game{position:fixed;inset:0;display:block}
-  #hud{position:fixed;inset:0;pointer-events:none;user-select:none}
-  .panel{background:rgba(8,12,24,.72);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:8px 12px;backdrop-filter:blur(2px)}
-  #stats{position:absolute;top:12px;left:12px;line-height:1.25}
-  #stats .cash{font-size:26px;font-weight:800;letter-spacing:.5px}
-  #stats .sub{font-size:12px;color:#ffd76a;font-weight:700}
-  #stats .sub2{font-size:12px;color:#9ecbff;font-weight:700}
-  #wanted{position:absolute;top:12px;right:12px;text-align:right}
-  #stars{font-size:24px;color:#ffd23e;text-shadow:0 0 8px rgba(255,210,62,.7);letter-spacing:2px}
-  #clock{font-size:13px;font-weight:700;color:#e8ecf5}
-  #mission{font-size:12px;color:#ff9fb0;font-weight:700}
-  #objective{position:absolute;top:12px;left:50%;transform:translateX(-50%);font-size:14px;font-weight:700;text-align:center}
-  #health{position:absolute;left:12px;bottom:14px;width:190px}
-  #health .label{font-size:11px;letter-spacing:2px;color:#ffb3b3;font-weight:800}
-  #healthbar{height:10px;background:rgba(255,255,255,.18);border-radius:5px;overflow:hidden;margin-top:3px}
-  #healthfill{height:100%;width:100%;background:linear-gradient(90deg,#ff5a5a,#ff8a5a)}
-  #minimap{position:absolute;left:12px;bottom:64px;width:150px;height:150px;border-radius:50%;border:3px solid rgba(255,255,255,.35);background:#0b1220;box-shadow:0 0 0 4px rgba(0,0,0,.35)}
-  #speed{position:absolute;right:16px;bottom:16px;font-size:38px;font-weight:800;text-shadow:0 2px 8px rgba(0,0,0,.6)}
-  #speed small{font-size:13px;font-weight:700;color:#cfe0ff}
-  #banner{position:absolute;top:22%;left:50%;transform:translateX(-50%);font-size:30px;font-weight:900;text-align:center;text-shadow:0 3px 14px rgba(0,0,0,.75);opacity:0;transition:opacity .3s}
-  #banner .sub{display:block;font-size:15px;font-weight:700;color:#ffe9a8}
-  #toast{position:absolute;bottom:120px;left:50%;transform:translateX(-50%);font-size:14px;font-weight:700;background:rgba(8,12,24,.8);padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .3s}
-  #start,#pause{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at 50% 30%,rgba(20,40,90,.88),rgba(4,6,14,.94));z-index:10;text-align:center;padding:20px}
-  #start h1{font-size:52px;margin:0;letter-spacing:3px;background:linear-gradient(180deg,#ffe9a8,#ff9d5c);-webkit-background-clip:text;background-clip:text;color:transparent}
-  #start h2{font-size:16px;color:#9ecbff;margin:6px 0 18px;font-weight:600}
-  #start p{max-width:560px;line-height:1.55;color:#dbe4f5;font-size:15px}
-  #start .keys{font-size:13px;color:#ffd76a;margin-top:8px}
-  button{pointer-events:auto;cursor:pointer;margin-top:18px;font-size:18px;font-weight:800;padding:12px 34px;border-radius:10px;border:0;background:linear-gradient(180deg,#ffd23e,#ff9d2e);color:#231303}
-  button:hover{filter:brightness(1.08)}
-  #pause{display:none}
-  #pause h1{font-size:36px;margin:0}
-  .hidden{display:none!important}
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0a0e14; font-family: Arial, Helvetica, sans-serif; }
+  #game-canvas { display: block; width: 100vw; height: 100vh; }
+  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; text-shadow: 0 1px 3px #000; }
+  .panel { background: rgba(8, 12, 18, 0.62); border-radius: 8px; padding: 8px 12px; }
+  #top-left { position: absolute; top: 12px; left: 12px; min-width: 210px; }
+  #cash { font-size: 26px; font-weight: bold; color: #7dff8a; }
+  #stars { font-size: 22px; letter-spacing: 2px; }
+  .bar { height: 8px; background: rgba(255,255,255,0.25); border-radius: 4px; margin-top: 4px; overflow: hidden; }
+  .bar > div { height: 100%; border-radius: 4px; }
+  #respect-fill { background: #f2c200; width: 0%; }
+  #health-fill { background: #2ecc71; width: 100%; }
+  .small { font-size: 12px; opacity: 0.9; margin-top: 3px; }
+  #top-right { position: absolute; top: 12px; right: 12px; text-align: right; }
+  #clock { font-size: 20px; font-weight: bold; }
+  #district { font-size: 13px; opacity: 0.9; }
+  #speed { font-size: 18px; margin-top: 4px; }
+  #objective { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); font-size: 15px; max-width: 640px; text-align: center; }
+  #minimap { position: absolute; bottom: 14px; right: 14px; width: 180px; height: 180px; border: 2px solid rgba(255,255,255,0.55); border-radius: 8px; background: #20262b; }
+  #banner { position: absolute; top: 22%; left: 50%; transform: translateX(-50%); text-align: center; opacity: 0; transition: opacity 0.5s; }
+  #banner-title { font-size: 34px; font-weight: bold; color: #ffe14d; }
+  #banner-sub { font-size: 17px; margin-top: 6px; }
+  #toast { position: absolute; bottom: 210px; left: 50%; transform: translateX(-50%); font-size: 14px; opacity: 0; transition: opacity 0.4s; }
+  .screen { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; background: rgba(5, 8, 14, 0.82); color: #fff; text-align: center; z-index: 10; }
+  .screen h1 { font-size: 52px; margin: 0; color: #ff7a2a; letter-spacing: 2px; }
+  .screen h2 { font-size: 18px; font-weight: normal; color: #ffd98a; margin: 8px 0 22px; }
+  .screen button { pointer-events: auto; font-size: 18px; padding: 12px 28px; margin: 6px; border: none; border-radius: 8px; background: #ff7a2a; color: #fff; cursor: pointer; }
+  .screen button:hover { background: #ff8f4d; }
+  .screen p { max-width: 560px; line-height: 1.5; font-size: 14px; opacity: 0.9; }
+  #controls-list { font-size: 13px; opacity: 0.85; margin-top: 18px; }
+  #wasted-screen h1, #busted-screen h1 { color: #e74c3c; }
+  #test-report { position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
 </style>
-<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js"}}</script>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
 </head>
 <body>
-<canvas id="game"></canvas>
+<canvas id="game-canvas"></canvas>
 <div id="hud">
-  <div id="stats" class="panel"><div class="cash" id="cash">$250</div><div class="sub" id="respect">RESPECT 0</div><div class="sub2" id="coins">COINS 0/20</div></div>
-  <div id="wanted" class="panel"><div id="stars">☆☆☆☆☆</div><div id="clock">15:32 · DAY</div><div id="mission">MISSION 1/5</div></div>
-  <div id="objective" class="panel">Mission 1: First Job</div>
-  <canvas id="minimap" width="150" height="150"></canvas>
-  <div id="health"><div class="label" id="healthlabel">HEALTH</div><div id="healthbar"><div id="healthfill"></div></div></div>
-  <div id="speed">0 <small>KM/H</small></div>
-  <div id="banner"></div>
-  <div id="toast"></div>
+  <div id="top-left" class="panel">
+    <div id="cash">$800</div>
+    <div id="stars">☆☆☆☆☆</div>
+    <div class="small">RESPECT <span id="respect-num">0</span>/100</div>
+    <div class="bar"><div id="respect-fill"></div></div>
+    <div class="small">HEALTH <span id="health-num">100</span></div>
+    <div class="bar"><div id="health-fill"></div></div>
+    <div class="small" id="ammo">AMMO 12/12</div>
+  </div>
+  <div id="top-right" class="panel">
+    <div id="clock">17:17</div>
+    <div id="district">Beachside</div>
+    <div id="speed"></div>
+  </div>
+  <div id="objective" class="panel">Welcome to Solmar City.</div>
+  <canvas id="minimap" width="180" height="180"></canvas>
+  <div id="banner"><div id="banner-title"></div><div id="banner-sub"></div></div>
+  <div id="toast" class="panel"></div>
 </div>
-<div id="start">
+
+<div id="start-screen" class="screen">
   <h1>SOLMAR CITY</h1>
-  <h2>An original open-world crime game</h2>
-  <p>You are <b>Rook</b>, a getaway driver working for the fixer <b>Mari Voss</b>.
-  Steal cars, outrun the police, work five story missions, take taxi fares
-  and race the pier — all in a bay city with a full day and night cycle.</p>
-  <p class="keys">WASD move / drive · SHIFT sprint · SPACE handbrake · R reset car · E enter / exit car · CLICK shoot · T taxi · ESC pause</p>
-  <button id="playBtn">PLAY</button>
-  <button id="continueBtn" class="hidden">CONTINUE — <span id="continueLabel"></span></button>
+  <h2>An open-world crime game — six missions, a living city, and the whole department after you.</h2>
+  <button id="btn-new">New Game</button>
+  <button id="btn-continue">Continue</button>
+  <p>Leo Marlow is back in Solmar City with $800 and a fixer named Marta Reyes. Steal cars, run the harbor, hit the Neon Mile casino, and survive the night the helicopter comes for you. Taxi fares and courier deliveries pay between jobs.</p>
+  <div id="controls-list"></div>
 </div>
-<div id="pause"><h1>PAUSED</h1><p>Press Esc to keep playing. Your progress is saved.</p><button id="resumeBtn">RESUME</button></div>
+<div id="pause-screen" class="screen">
+  <h1>PAUSED</h1>
+  <p>Press P or Esc to resume. H saves your game.</p>
+</div>
+<div id="wasted-screen" class="screen">
+  <h1>WASTED</h1>
+  <p>You wake up at the beach, $100 lighter.</p>
+</div>
+<div id="busted-screen" class="screen">
+  <h1>BUSTED</h1>
+  <p>The cops drop you downtown, $100 lighter.</p>
+</div>
+<div id="test-report"></div>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
