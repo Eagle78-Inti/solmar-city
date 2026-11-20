@@ -1,5 +1,13 @@
-# Solmar City v7 build output — never committed
-out/
+# Solmar City v9 — local build and test output only. Nothing in here is
+# part of the game; the gate counts only what lives under game/ and
+# screenshots/ in the repository. Keep this file short: one line per thing
+# a local run can leave behind.
 node_modules/
-.DS_Store
+out/
+out2/
 *.log
+.DS_Store
+# Playtest and screenshot scratch files live here while the harness runs;
+# they are never committed and never enter the hand-in.
+playtest-*.json
+shots/

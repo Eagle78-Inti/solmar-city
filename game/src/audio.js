@@ -1,147 +1,129 @@
-// Solmar City v8 — all sound is synthesized with WebAudio: engine hum, sirens,
-// gunshots, pickups and mission stings. No audio files, no network.
-import { clamp } from './util.js';
+// Solmar City — radio: three procedural stations, sequenced live with
+// WebAudio. No audio files, no network. Everything is guarded so the game
+// keeps playing even where audio is blocked.
+(function () {
+  var SOL = window.SOL;
 
-export class AudioSys {
-  constructor() {
-    this.ctx = null;
-    this.muted = false;
-    this.engineOsc = null;
-    this.engineGain = null;
-    this.sirenOsc = null;
-    this.sirenGain = null;
-    this.sirenTimer = null;
-  }
+  var STATIONS = [
+    { name: 'Vice Radio', bpm: 100, wave: 'sawtooth', roots: [55, 43.65, 65.41, 49],
+      arp: [0, 1, 2, 1, 0, 2, 1, 2], bass: [0, 0, 1, 0, 2, 0, 3, 2] },
+    { name: 'Neon Rock', bpm: 132, wave: 'square', roots: [82.41, 98, 110, 98],
+      arp: [0, 0, 2, 0, 1, 2, 1, 0], bass: [0, 0, 0, 1, 0, 2, 0, 3] },
+    { name: 'Ocean FM', bpm: 76, wave: 'triangle', roots: [130.81, 110, 87.31, 98],
+      arp: [0, 2, 1, 2, 0, 1, 2, 1], bass: [0, 3, 2, 1, 0, 2, 1, 0] },
+  ];
+  var SCALES = [1, 1.189, 1.335, 1.498, 1.782, 2]; // minor-ish steps for the arp
 
-  // Browsers only allow audio after a user gesture; call from any key/click.
-  unlock() {
-    if (this.ctx) {
-      if (this.ctx.state === 'suspended') this.ctx.resume();
-      return;
+  var radio = { ctx: null, station: 0, muted: false, step: 0, nextT: 0, timer: null, started: false };
+  SOL.radio = radio;
+  SOL.stationName = function () { return STATIONS[radio.station].name; };
+
+  function ensureAudio() {
+    if (radio.ctx) {
+      if (radio.ctx.state === 'suspended') { try { radio.ctx.resume(); } catch (e) { /* audio blocked */ } }
+      return radio.ctx;
     }
     try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      this.ctx = new AC();
-      const g = this.ctx.createGain();
-      g.gain.value = 0.5;
-      g.connect(this.ctx.destination);
-      this.master = g;
-      // Engine: a low sawtooth whose pitch follows speed.
-      this.engineOsc = this.ctx.createOscillator();
-      this.engineOsc.type = 'sawtooth';
-      this.engineOsc.frequency.value = 55;
-      this.engineGain = this.ctx.createGain();
-      this.engineGain.gain.value = 0;
-      const filt = this.ctx.createBiquadFilter();
-      filt.type = 'lowpass';
-      filt.frequency.value = 420;
-      this.engineOsc.connect(filt);
-      filt.connect(this.engineGain);
-      this.engineGain.connect(this.master);
-      this.engineOsc.start();
-      // Siren: two-tone square wave, toggled by a timer.
-      this.sirenOsc = this.ctx.createOscillator();
-      this.sirenOsc.type = 'square';
-      this.sirenOsc.frequency.value = 660;
-      this.sirenGain = this.ctx.createGain();
-      this.sirenGain.gain.value = 0;
-      this.sirenOsc.connect(this.sirenGain);
-      this.sirenGain.connect(this.master);
-      this.sirenOsc.start();
-      this.sirenTimer = setInterval(() => {
-        if (!this.sirenOsc || !this.sirenGain) return;
-        const on = this.sirenGain.gain.value > 0.01;
-        this.sirenOsc.frequency.value = on ? 880 : 660;
-      }, 420);
-    } catch (e) {
-      this.ctx = null;
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      radio.ctx = new AC();
+      radio.master = radio.ctx.createGain();
+      radio.master.gain.value = radio.muted ? 0 : 0.16;
+      radio.master.connect(radio.ctx.destination);
+    } catch (e) { radio.ctx = null; }
+    return radio.ctx;
+  }
+  SOL.ensureAudio = ensureAudio;
+
+  function note(freq, t, dur, type, vol) {
+    if (!radio.ctx || !radio.master) return;
+    try {
+      var o = radio.ctx.createOscillator();
+      var g = radio.ctx.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(vol, t + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(radio.master);
+      o.start(t); o.stop(t + dur + 0.05);
+    } catch (e) { /* a failed note never stops the music */ }
+  }
+
+  function scheduleStep() {
+    var st = STATIONS[radio.station];
+    var spb = 60 / st.bpm / 2; // eighth notes
+    var bar = Math.floor(radio.step / 8) % st.roots.length;
+    var root = st.roots[bar];
+    var s = radio.step % 8;
+    var t = radio.nextT;
+    // bass on the beat
+    note(root / 2, t, spb * 1.8, 'triangle', 0.5);
+    // arpeggio sparkle
+    var arpNote = root * SCALES[st.arp[s] % SCALES.length] * 2;
+    note(arpNote, t, spb * 0.9, st.wave, 0.16);
+    if (s === 0 || s === 4) note(root * 2, t, spb * 1.4, 'sine', 0.12);
+    // a soft hat tick on off-beats
+    if (s % 2 === 1) note(6000 + Math.random() * 1500, t, 0.03, 'square', 0.03);
+    radio.nextT += spb;
+    radio.step++;
+  }
+
+  function startRadio() {
+    if (!ensureAudio() || radio.started) return;
+    radio.started = true;
+    radio.nextT = radio.ctx.currentTime + 0.1;
+    radio.timer = setInterval(function () {
+      if (!radio.ctx || radio.muted) return;
+      while (radio.nextT < radio.ctx.currentTime + 0.15) scheduleStep();
+    }, 30);
+  }
+  SOL.startRadio = startRadio;
+
+  function cycleStation() {
+    radio.station = (radio.station + 1) % STATIONS.length;
+    radio.step = 0;
+    if (radio.ctx) radio.nextT = radio.ctx.currentTime + 0.05;
+    SOL.hudToast(STATIONS[radio.station].name, 'Now playing on the radio');
+    return STATIONS[radio.station].name;
+  }
+  SOL.cycleStation = cycleStation;
+
+  function toggleMute() {
+    radio.muted = !radio.muted;
+    if (radio.master) radio.master.gain.value = radio.muted ? 0 : 0.16;
+    return radio.muted;
+  }
+  SOL.toggleMute = toggleMute;
+})();
+
+  // A short three-note station ident that plays when the driver changes
+  // station, so the switch is audible as well as visible.
+  (function () {
+    var SOL = window.SOL;
+    function playJingle() {
+      var radio = SOL.radio;
+      if (!radio.ctx || radio.muted || !radio.master) return;
+      try {
+        var t0 = radio.ctx.currentTime + 0.02;
+        var notes = [523.25, 659.25, 783.99];
+        notes.forEach(function (f, i) {
+          var o = radio.ctx.createOscillator();
+          var g = radio.ctx.createGain();
+          o.type = 'square'; o.frequency.value = f;
+          var t = t0 + i * 0.09;
+          g.gain.setValueAtTime(0.0001, t);
+          g.gain.linearRampToValueAtTime(0.08, t + 0.01);
+          g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+          o.connect(g); g.connect(radio.master);
+          o.start(t); o.stop(t + 0.2);
+        });
+      } catch (e) { /* a failed jingle never stops the game */ }
     }
-  }
-
-  setEngine(speed01, driving) {
-    if (!this.ctx || !this.engineGain || !this.engineOsc) return;
-    const target = driving ? 0.05 + speed01 * 0.09 : 0;
-    this.engineGain.gain.setTargetAtTime(this.muted ? 0 : target, this.ctx.currentTime, 0.08);
-    this.engineOsc.frequency.setTargetAtTime(50 + speed01 * 130, this.ctx.currentTime, 0.08);
-  }
-
-  setSiren(on) {
-    if (!this.ctx || !this.sirenGain) return;
-    this.sirenGain.gain.setTargetAtTime(on && !this.muted ? 0.045 : 0, this.ctx.currentTime, 0.1);
-  }
-
-  blip(freq = 880, dur = 0.09, type = 'sine', vol = 0.16) {
-    if (!this.ctx || this.muted) return;
-    try {
-      const o = this.ctx.createOscillator();
-      const g = this.ctx.createGain();
-      o.type = type;
-      o.frequency.value = freq;
-      g.gain.setValueAtTime(vol, this.ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + dur);
-      o.connect(g);
-      g.connect(this.master);
-      o.start();
-      o.stop(this.ctx.currentTime + dur);
-    } catch (e) { /* audio is cosmetic; never break the game */ }
-  }
-
-  shot() {
-    if (!this.ctx || this.muted) return;
-    try {
-      const len = Math.floor(this.ctx.sampleRate * 0.12);
-      const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
-      const src = this.ctx.createBufferSource();
-      src.buffer = buf;
-      const g = this.ctx.createGain();
-      g.gain.value = 0.22;
-      const f = this.ctx.createBiquadFilter();
-      f.type = 'lowpass';
-      f.frequency.value = 1800;
-      src.connect(f);
-      f.connect(g);
-      g.connect(this.master);
-      src.start();
-    } catch (e) { /* cosmetic */ }
-  }
-
-  sting(good = true) {
-    if (!this.ctx || this.muted) return;
-    const notes = good ? [523, 659, 784, 1046] : [392, 330, 262, 196];
-    notes.forEach((f, i) => {
-      setTimeout(() => this.blip(f, 0.22, 'triangle', 0.2), i * 110);
-    });
-  }
-
-  // Crash thud: short filtered noise burst, quieter than a gunshot.
-  crash(intensity = 1) {
-    if (!this.ctx || this.muted) return;
-    try {
-      const len = Math.floor(this.ctx.sampleRate * 0.18);
-      const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len) * 0.7;
-      const src = this.ctx.createBufferSource();
-      src.buffer = buf;
-      const g = this.ctx.createGain();
-      g.gain.value = 0.18 * clamp(intensity, 0.2, 1);
-      const f = this.ctx.createBiquadFilter();
-      f.type = 'lowpass';
-      f.frequency.value = 700;
-      src.connect(f);
-      f.connect(g);
-      g.connect(this.master);
-      src.start();
-    } catch (e) { /* cosmetic */ }
-  }
-
-  setMuted(m) {
-    this.muted = m;
-    if (this.master && this.ctx) {
-      this.master.gain.setTargetAtTime(m ? 0 : 0.5, this.ctx.currentTime, 0.05);
-    }
-  }
-}
+    SOL.playJingle = playJingle;
+    var origCycle = SOL.cycleStation;
+    SOL.cycleStation = function () {
+      var name = origCycle();
+      playJingle();
+      return name;
+    };
+  })();
