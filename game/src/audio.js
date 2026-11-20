@@ -1,129 +1,204 @@
-// Solmar City — radio: three procedural stations, sequenced live with
-// WebAudio. No audio files, no network. Everything is guarded so the game
-// keeps playing even where audio is blocked.
-(function () {
-  var SOL = window.SOL;
+// audio.js — procedural radio and sound effects. Three named stations with
+// track names shown in the HUD; everything is synthesized, nothing is loaded.
 
-  var STATIONS = [
-    { name: 'Vice Radio', bpm: 100, wave: 'sawtooth', roots: [55, 43.65, 65.41, 49],
-      arp: [0, 1, 2, 1, 0, 2, 1, 2], bass: [0, 0, 1, 0, 2, 0, 3, 2] },
-    { name: 'Neon Rock', bpm: 132, wave: 'square', roots: [82.41, 98, 110, 98],
-      arp: [0, 0, 2, 0, 1, 2, 1, 0], bass: [0, 0, 0, 1, 0, 2, 0, 3] },
-    { name: 'Ocean FM', bpm: 76, wave: 'triangle', roots: [130.81, 110, 87.31, 98],
-      arp: [0, 2, 1, 2, 0, 1, 2, 1], bass: [0, 3, 2, 1, 0, 2, 1, 0] },
-  ];
-  var SCALES = [1, 1.189, 1.335, 1.498, 1.782, 2]; // minor-ish steps for the arp
+import { G } from './state.js';
 
-  var radio = { ctx: null, station: 0, muted: false, step: 0, nextT: 0, timer: null, started: false };
-  SOL.radio = radio;
-  SOL.stationName = function () { return STATIONS[radio.station].name; };
+/** The three stations, each with its track list. */
+export const STATIONS = [
+  { name: 'Vice FM 88.4', tracks: ['Sunset Drive', 'Palm Shadows', 'Neon Rain'], mood: 'chill' },
+  { name: 'Neon Rock 101.7', tracks: ['Midnight Overdrive', 'Chrome Hearts', 'Gasoline Sky'], mood: 'rock' },
+  { name: 'Wave FM 94.2', tracks: ['Tide Line', 'Salt Air', 'Low Tide Love'], mood: 'bass' },
+];
 
-  function ensureAudio() {
-    if (radio.ctx) {
-      if (radio.ctx.state === 'suspended') { try { radio.ctx.resume(); } catch (e) { /* audio blocked */ } }
-      return radio.ctx;
+/** The current track name on the current station. */
+export function currentTrack() {
+  const s = STATIONS[G.radio];
+  if (!s) return '';
+  return s.tracks[G.radioTrack % s.tracks.length];
+}
+
+let ctx = null;
+let master = null;
+let radioTimer = null;
+let nextNoteAt = 0;
+let step = 0;
+let trackStartedAt = 0;
+
+function midi(m) {
+  return 440 * Math.pow(2, (m - 69) / 12);
+}
+
+/** Create the audio context on the first user gesture. */
+export function initAudio() {
+  if (ctx) return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    ctx = new AC();
+    master = ctx.createGain();
+    master.gain.value = 0.5;
+    master.connect(ctx.destination);
+  } catch (e) {
+    ctx = null;
+  }
+}
+
+function resume() {
+  if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+}
+
+/** A short oscillator note. */
+function note(freq, at, dur, type, vol) {
+  if (!ctx) return;
+  try {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = type || 'sine';
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(vol || 0.12, at + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, at + dur);
+    o.connect(g);
+    g.connect(master);
+    o.start(at);
+    o.stop(at + dur + 0.05);
+  } catch (e) {
+    // Audio is best-effort: never let it break the game.
+  }
+}
+
+/** The radio scheduler: schedules the current station's pattern ahead. */
+function scheduleRadio() {
+  if (!ctx) return;
+  resume();
+  const station = STATIONS[G.radio];
+  const ahead = ctx.currentTime + 0.35;
+  while (nextNoteAt < ahead) {
+    const s = step % 16;
+    if (station.mood === 'chill') {
+      // Slow pads: a chord every 4 steps, a high sparkle note sometimes.
+      if (s % 4 === 0) {
+        const root = [57, 60, 64][Math.floor(step / 4) % 3];
+        note(midi(root), nextNoteAt, 1.6, 'triangle', 0.07);
+        note(midi(root + 7), nextNoteAt, 1.6, 'triangle', 0.05);
+        note(midi(root + 12), nextNoteAt, 1.4, 'sine', 0.04);
+      }
+      if (s === 6 || s === 14) note(midi(76 + (step % 3)), nextNoteAt, 0.5, 'sine', 0.05);
+    } else if (station.mood === 'rock') {
+      // Fast arpeggio over a driving bass.
+      const arp = [57, 60, 64, 69, 64, 60];
+      note(midi(arp[s % 6]), nextNoteAt, 0.16, 'square', 0.05);
+      if (s % 4 === 0) note(midi(33), nextNoteAt, 0.3, 'sawtooth', 0.09);
+      if (s % 2 === 0) note(midi(45), nextNoteAt, 0.12, 'square', 0.04);
+    } else {
+      // Bass pulse with a sparse melody.
+      if (s % 4 === 0) note(midi(38), nextNoteAt, 0.5, 'sine', 0.16);
+      if (s === 2 || s === 7 || s === 11) note(midi(69 + (s % 5)), nextNoteAt, 0.3, 'triangle', 0.05);
     }
-    try {
-      var AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return null;
-      radio.ctx = new AC();
-      radio.master = radio.ctx.createGain();
-      radio.master.gain.value = radio.muted ? 0 : 0.16;
-      radio.master.connect(radio.ctx.destination);
-    } catch (e) { radio.ctx = null; }
-    return radio.ctx;
+    step++;
+    nextNoteAt += 0.21;
   }
-  SOL.ensureAudio = ensureAudio;
-
-  function note(freq, t, dur, type, vol) {
-    if (!radio.ctx || !radio.master) return;
-    try {
-      var o = radio.ctx.createOscillator();
-      var g = radio.ctx.createGain();
-      o.type = type; o.frequency.value = freq;
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(vol, t + 0.015);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      o.connect(g); g.connect(radio.master);
-      o.start(t); o.stop(t + dur + 0.05);
-    } catch (e) { /* a failed note never stops the music */ }
+  // A new track every 24 seconds of radio.
+  if (trackStartedAt === 0) trackStartedAt = performance.now() / 1000;
+  if (performance.now() / 1000 - trackStartedAt > 24) {
+    G.radioTrack = (G.radioTrack + 1) % STATIONS[G.radio].tracks.length;
+    trackStartedAt = performance.now() / 1000;
   }
+}
 
-  function scheduleStep() {
-    var st = STATIONS[radio.station];
-    var spb = 60 / st.bpm / 2; // eighth notes
-    var bar = Math.floor(radio.step / 8) % st.roots.length;
-    var root = st.roots[bar];
-    var s = radio.step % 8;
-    var t = radio.nextT;
-    // bass on the beat
-    note(root / 2, t, spb * 1.8, 'triangle', 0.5);
-    // arpeggio sparkle
-    var arpNote = root * SCALES[st.arp[s] % SCALES.length] * 2;
-    note(arpNote, t, spb * 0.9, st.wave, 0.16);
-    if (s === 0 || s === 4) note(root * 2, t, spb * 1.4, 'sine', 0.12);
-    // a soft hat tick on off-beats
-    if (s % 2 === 1) note(6000 + Math.random() * 1500, t, 0.03, 'square', 0.03);
-    radio.nextT += spb;
-    radio.step++;
+/** Start the radio (on the current station). */
+export function startRadio() {
+  initAudio();
+  if (!ctx || radioTimer) return;
+  nextNoteAt = ctx.currentTime + 0.1;
+  step = 0;
+  trackStartedAt = performance.now() / 1000;
+  radioTimer = setInterval(scheduleRadio, 120);
+}
+
+/** Switch to the next station. */
+export function cycleStation() {
+  G.radio = (G.radio + 1) % STATIONS.length;
+  G.radioTrack = 0;
+  trackStartedAt = performance.now() / 1000;
+  step = 0;
+  return STATIONS[G.radio].name;
+}
+
+/** The name of the current station. */
+export function stationName() {
+  return STATIONS[G.radio].name;
+}
+
+/** A gunshot: a short burst of filtered noise. */
+export function shootSound() {
+  if (!ctx) return;
+  resume();
+  try {
+    const dur = 0.09;
+    const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const g = ctx.createGain();
+    g.gain.value = 0.25;
+    src.connect(g);
+    g.connect(master);
+    src.start();
+  } catch (e) {
+    // Best effort only.
   }
+}
 
-  function startRadio() {
-    if (!ensureAudio() || radio.started) return;
-    radio.started = true;
-    radio.nextT = radio.ctx.currentTime + 0.1;
-    radio.timer = setInterval(function () {
-      if (!radio.ctx || radio.muted) return;
-      while (radio.nextT < radio.ctx.currentTime + 0.15) scheduleStep();
-    }, 30);
+/** The car horn: two tones, a quarter of a second. */
+export function hornSound() {
+  initAudio();
+  if (!ctx) return;
+  resume();
+  const at = ctx.currentTime;
+  note(440, at, 0.22, 'square', 0.1);
+  note(554, at, 0.22, 'square', 0.1);
+}
+
+/** A pickup chime: two rising sine notes. */
+export function pickupSound() {
+  initAudio();
+  if (!ctx) return;
+  resume();
+  const at = ctx.currentTime;
+  note(660, at, 0.15, 'sine', 0.1);
+  note(880, at + 0.09, 0.2, 'sine', 0.1);
+}
+
+/** A mission-complete jingle: three rising notes. */
+export function missionSound() {
+  initAudio();
+  if (!ctx) return;
+  resume();
+  const at = ctx.currentTime;
+  note(523, at, 0.18, 'triangle', 0.12);
+  note(659, at + 0.12, 0.18, 'triangle', 0.12);
+  note(784, at + 0.24, 0.3, 'triangle', 0.12);
+}
+
+/** A crash thud: a low sine drop. */
+export function crashSound() {
+  if (!ctx) return;
+  resume();
+  try {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(120, ctx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.18);
+    g.gain.setValueAtTime(0.3, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+    o.connect(g);
+    g.connect(master);
+    o.start();
+    o.stop(ctx.currentTime + 0.25);
+  } catch (e) {
+    // Best effort only.
   }
-  SOL.startRadio = startRadio;
-
-  function cycleStation() {
-    radio.station = (radio.station + 1) % STATIONS.length;
-    radio.step = 0;
-    if (radio.ctx) radio.nextT = radio.ctx.currentTime + 0.05;
-    SOL.hudToast(STATIONS[radio.station].name, 'Now playing on the radio');
-    return STATIONS[radio.station].name;
-  }
-  SOL.cycleStation = cycleStation;
-
-  function toggleMute() {
-    radio.muted = !radio.muted;
-    if (radio.master) radio.master.gain.value = radio.muted ? 0 : 0.16;
-    return radio.muted;
-  }
-  SOL.toggleMute = toggleMute;
-})();
-
-  // A short three-note station ident that plays when the driver changes
-  // station, so the switch is audible as well as visible.
-  (function () {
-    var SOL = window.SOL;
-    function playJingle() {
-      var radio = SOL.radio;
-      if (!radio.ctx || radio.muted || !radio.master) return;
-      try {
-        var t0 = radio.ctx.currentTime + 0.02;
-        var notes = [523.25, 659.25, 783.99];
-        notes.forEach(function (f, i) {
-          var o = radio.ctx.createOscillator();
-          var g = radio.ctx.createGain();
-          o.type = 'square'; o.frequency.value = f;
-          var t = t0 + i * 0.09;
-          g.gain.setValueAtTime(0.0001, t);
-          g.gain.linearRampToValueAtTime(0.08, t + 0.01);
-          g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
-          o.connect(g); g.connect(radio.master);
-          o.start(t); o.stop(t + 0.2);
-        });
-      } catch (e) { /* a failed jingle never stops the game */ }
-    }
-    SOL.playJingle = playJingle;
-    var origCycle = SOL.cycleStation;
-    SOL.cycleStation = function () {
-      var name = origCycle();
-      playJingle();
-      return name;
-    };
-  })();
+}

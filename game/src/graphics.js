@@ -1,425 +1,263 @@
-// Solmar City — graphics core: renderer, sky, sun and moon, fog, weather,
-// and every procedural canvas texture the city is built from. No external art.
-(function () {
-  var SOL = (window.SOL = window.SOL || {});
-  var THREE = window.THREE;
+// graphics.js — the look of Solmar City: renderer, sky dome, sun and moon,
+// fog, shadows, rain and the procedural canvas textures. Graphics first.
 
-  SOL.THREE = THREE;
-  SOL.time = { hour: 17.75, dayLength: 480 }; // game clock; a full day is 8 real minutes
-  SOL.weather = 'clear'; // clear | haze | rain
-  SOL.night = 0; // 0 = day, 1 = full night, lerped from the clock
-  SOL.rainAmt = 0;
+import * as THREE from 'three';
+import { G } from './state.js';
+import { clamp, lerp, makeRng, mixHex, paintAsphalt, paintBrick, paintFacade, paintNeon, paintSand } from './util.js';
 
-  // Blend two THREE.Color values channel by channel into `out` (THREE.Color has
-  // no addScaledVector; do the arithmetic on r, g and b directly).
-  function lerpColor(a, b, t, out) {
-    out.r = a.r + (b.r - a.r) * t;
-    out.g = a.g + (b.g - a.g) * t;
-    out.b = a.b + (b.b - a.b) * t;
-    return out;
+export const gfx = {
+  renderer: null,
+  scene: null,
+  camera: null,
+  sun: null,
+  moon: null,
+  hemi: null,
+  skyMat: null,
+  skyMesh: null,
+  rain: null,
+  rainVel: null,
+  textures: {},
+};
+
+/** Build the WebGL renderer with ACES tone mapping and 2048px shadows. */
+export function initGraphics(canvas) {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x2a2438, 0.0016);
+  const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 2000);
+  camera.position.set(10, 8, 24);
+  gfx.renderer = renderer;
+  gfx.scene = scene;
+  gfx.camera = camera;
+
+  // Sun: warm directional light with a 2048px shadow map over the city.
+  const sun = new THREE.DirectionalLight(0xffd9a0, 2.6);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -260;
+  sun.shadow.camera.right = 260;
+  sun.shadow.camera.top = 260;
+  sun.shadow.camera.bottom = -260;
+  sun.shadow.camera.near = 10;
+  sun.shadow.camera.far = 900;
+  sun.shadow.bias = -0.0004;
+  scene.add(sun);
+  scene.add(sun.target);
+  gfx.sun = sun;
+
+  // Moon: cool fill so nights are readable, never pitch black.
+  const moon = new THREE.DirectionalLight(0x8fa8ff, 0.35);
+  moon.position.set(-120, 180, -80);
+  scene.add(moon);
+  gfx.moon = moon;
+
+  const hemi = new THREE.HemisphereLight(0xffe0b8, 0x2a2438, 0.75);
+  scene.add(hemi);
+  gfx.hemi = hemi;
+
+  buildSky();
+  buildRain();
+  buildTextures();
+  return gfx;
+}
+
+/** A big sky dome whose colours follow the time of day. */
+function buildSky() {
+  const geo = new THREE.SphereGeometry(900, 24, 16);
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: {
+      top: { value: new THREE.Color(0x2a4a8a) },
+      mid: { value: new THREE.Color(0xff9a5a) },
+      bot: { value: new THREE.Color(0x1a1428) },
+    },
+    vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: `varying vec3 vP; uniform vec3 top; uniform vec3 mid; uniform vec3 bot;
+      void main(){ float h = normalize(vP).y; vec3 c = h > 0.12 ? mix(mid, top, smoothstep(0.12, 0.65, h)) : mix(bot, mid, smoothstep(-0.08, 0.12, h)); gl_FragColor = vec4(c, 1.0); }`,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  gfx.scene.add(mesh);
+  gfx.skyMat = mat;
+  gfx.skyMesh = mesh;
+
+  // Sun disc + moon disc + a few clouds, all children of the sky.
+  const sunDisc = new THREE.Mesh(
+    new THREE.CircleGeometry(26, 24),
+    new THREE.MeshBasicMaterial({ color: 0xffd27a, fog: false }),
+  );
+  sunDisc.name = 'sunDisc';
+  mesh.add(sunDisc);
+  const moonDisc = new THREE.Mesh(
+    new THREE.CircleGeometry(16, 24),
+    new THREE.MeshBasicMaterial({ color: 0xe8eeff, fog: false }),
+  );
+  moonDisc.name = 'moonDisc';
+  mesh.add(moonDisc);
+  const rng = makeRng(77);
+  for (let i = 0; i < 14; i++) {
+    const cloud = new THREE.Mesh(
+      new THREE.SphereGeometry(18 + rng() * 22, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.16, fog: false }),
+    );
+    cloud.scale.y = 0.32;
+    const a = rng() * Math.PI * 2;
+    const r = 620 + rng() * 160;
+    cloud.position.set(Math.cos(a) * r, 120 + rng() * 160, Math.sin(a) * r);
+    mesh.add(cloud);
   }
-  SOL.lerpColor = lerpColor;
+}
 
-  function canvasTex(w, h, draw, repeat) {
-    var c = document.createElement('canvas');
-    c.width = w; c.height = h;
-    draw(c.getContext('2d'), w, h);
-    var t = new THREE.CanvasTexture(c);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.anisotropy = 4;
-    if (repeat) t.repeat.set(repeat[0], repeat[1]);
-    return t;
+/** Rain as a Points cloud, hidden until the weather turns. */
+function buildRain() {
+  const count = 2600;
+  const pos = new Float32Array(count * 3);
+  const vel = new Float32Array(count);
+  const rng = makeRng(4242);
+  for (let i = 0; i < count; i++) {
+    pos[i * 3] = (rng() - 0.5) * 220;
+    pos[i * 3 + 1] = rng() * 60;
+    pos[i * 3 + 2] = (rng() - 0.5) * 220;
+    vel[i] = 55 + rng() * 30;
   }
-  SOL.makeTex = canvasTex;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({ color: 0xaac4e0, size: 0.55, transparent: true, opacity: 0.5 });
+  const pts = new THREE.Points(geo, mat);
+  pts.visible = false;
+  pts.frustumCulled = false;
+  gfx.scene.add(pts);
+  gfx.rain = pts;
+  gfx.rainVel = vel;
+}
 
-  function rand(seed) { // tiny deterministic PRNG so textures look the same every run
-    var s = seed >>> 0;
-    return function () { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+/** All procedural canvas textures, built once. */
+function buildTextures() {
+  const rng = makeRng(20261121);
+  const t = {};
+  t.facadeCream = new THREE.CanvasTexture(paintFacade(256, 512, 0xd8c49a, 0.45, rng));
+  t.facadePink = new THREE.CanvasTexture(paintFacade(256, 512, 0xd89a9a, 0.5, rng));
+  t.facadeBlue = new THREE.CanvasTexture(paintFacade(256, 512, 0x7a8fb0, 0.55, rng));
+  t.facadeDark = new THREE.CanvasTexture(paintFacade(256, 512, 0x3a4258, 0.7, rng));
+  t.facadeGold = new THREE.CanvasTexture(paintFacade(256, 512, 0xc9a24a, 0.5, rng));
+  t.brick = new THREE.CanvasTexture(paintBrick(256, 256, 0x8a4a38, rng));
+  t.brick2 = new THREE.CanvasTexture(paintBrick(256, 256, 0x6a5a48, rng));
+  t.asphalt = new THREE.CanvasTexture(paintAsphalt(128, 256, rng));
+  t.sand = new THREE.CanvasTexture(paintSand(256, 256, rng));
+  t.neonPalms = new THREE.CanvasTexture(paintNeon(512, 128, 'PALMS', '#ff5ad0', rng));
+  t.neonCasino = new THREE.CanvasTexture(paintNeon(512, 128, 'CASINO', '#ffd23e', rng));
+  t.neonNeon = new THREE.CanvasTexture(paintNeon(512, 128, 'NEON MILE', '#3ee6ff', rng));
+  t.neonAmmu = new THREE.CanvasTexture(paintNeon(512, 128, 'AMMU-NATION', '#ff6a3e', rng));
+  t.neonGarage = new THREE.CanvasTexture(paintNeon(512, 128, 'SUNSET GARAGE', '#7dff6a', rng));
+  t.neonHotel = new THREE.CanvasTexture(paintNeon(512, 128, 'HOTEL SOLMAR', '#ff9a3e', rng));
+  for (const k of Object.keys(t)) {
+    t[k].colorSpace = THREE.SRGBColorSpace;
+    t[k].wrapS = THREE.RepeatWrapping;
+    t[k].wrapT = THREE.RepeatWrapping;
+    t[k].anisotropy = 4;
   }
-  SOL.rand = rand;
+  gfx.textures = t;
+}
 
-  // ---- procedural textures -------------------------------------------------
-  function facadeTexture(base, trim, litRatio, seed) {
-    var r = rand(seed);
-    return canvasTex(256, 256, function (g, w, h) {
-      g.fillStyle = base; g.fillRect(0, 0, w, h);
-      // subtle grime streaks
-      for (var i = 0; i < 40; i++) {
-        g.fillStyle = 'rgba(0,0,0,' + (0.03 + r() * 0.06) + ')';
-        g.fillRect(r() * w, r() * h, 2 + r() * 8, 20 + r() * 60);
+/** Move the sun, moon and sky colours for an in-game hour (0-24). */
+export function setTimeOfDay(hours) {
+  const h = ((hours % 24) + 24) % 24;
+  G.time = h;
+  // Sun elevation: peaks at noon, below the horizon at night.
+  const sunAngle = ((h - 6) / 12) * Math.PI; // 6h sunrise, 18h sunset
+  const elev = Math.sin(sunAngle);
+  const az = Math.cos(sunAngle);
+  const sun = gfx.sun;
+  sun.position.set(az * 320, Math.max(elev, -0.12) * 320, 120);
+  sun.target.position.set(0, 0, 0);
+  // Remember the sun's direction so the shadow box can follow the player.
+  gfx.sunDir = { x: az * 320, y: Math.max(elev, -0.12) * 320, z: 120 };
+  const day = clamp(elev * 1.6 + 0.25, 0, 1);
+  const dusk = clamp(1 - Math.abs(elev) * 3.2, 0, 1);
+  sun.intensity = 0.4 + day * 2.4;
+  sun.color.setHex(mixHex(0xff5a2a, 0xffe8c0, clamp(day + dusk * 0.4, 0, 1)));
+  gfx.moon.intensity = 0.12 + (1 - day) * 0.4;
+  gfx.hemi.intensity = 0.45 + day * 0.45;
+  const u = gfx.skyMat.uniforms;
+  // Sky colours blend channel by channel between night, dusk and day.
+  const topDay = 0x3a6ab0;
+  const topNight = 0x060818;
+  const midDay = 0x9fc4e8;
+  const midDusk = 0xff7a3c;
+  const midNight = 0x1a1430;
+  const botDay = 0xcfd8e0;
+  const botNight = 0x0a0616;
+  const top = mixHex(topNight, topDay, day);
+  let mid = mixHex(midNight, midDay, day);
+  mid = mixHex(mid, midDusk, dusk * 0.75);
+  const bot = mixHex(botNight, botDay, day);
+  u.top.value.setHex(top);
+  u.mid.value.setHex(mid);
+  u.bot.value.setHex(bot);
+  // Fog follows the sky.
+  gfx.scene.fog.color.setHex(mixHex(0x141024, 0x8a7a68, day * 0.7 + dusk * 0.3));
+  gfx.scene.background = null;
+  // Sun/moon discs ride the dome.
+  const sunDisc = gfx.skyMesh.getObjectByName('sunDisc');
+  const moonDisc = gfx.skyMesh.getObjectByName('moonDisc');
+  if (sunDisc) {
+    sunDisc.position.set(az * 820, Math.max(elev, -0.05) * 820, 300);
+    sunDisc.lookAt(gfx.camera.position);
+    sunDisc.material.opacity = 1;
+  }
+  if (moonDisc) {
+    moonDisc.position.set(-az * 820, Math.max(-elev, 0.1) * 820, -300);
+    moonDisc.lookAt(gfx.camera.position);
+  }
+}
+
+/** Switch the weather: 'clear' or 'rain'. */
+export function setWeather(kind) {
+  G.weather = kind;
+  G.rainAmount = kind === 'rain' ? 1 : 0;
+  if (gfx.rain) gfx.rain.visible = kind === 'rain';
+  if (gfx.scene) {
+    gfx.scene.fog.density = kind === 'rain' ? 0.0026 : 0.0016;
+  }
+}
+
+/** Per-frame graphics update: rain fall, sky follows the camera. */
+export function updateGraphics(dt, cameraPos) {
+  if (gfx.skyMesh && cameraPos) {
+    gfx.skyMesh.position.set(cameraPos.x, 0, cameraPos.z);
+  }
+  if (gfx.rain && gfx.rain.visible) {
+    const pos = gfx.rain.geometry.attributes.position;
+    const arr = pos.array;
+    const cx = cameraPos ? cameraPos.x : 0;
+    const cz = cameraPos ? cameraPos.z : 0;
+    for (let i = 0; i < gfx.rainVel.length; i++) {
+      arr[i * 3 + 1] -= gfx.rainVel[i] * dt;
+      if (arr[i * 3 + 1] < 0) {
+        arr[i * 3 + 1] = 55 + Math.random() * 5;
+        arr[i * 3] = cx + (Math.random() - 0.5) * 220;
+        arr[i * 3 + 2] = cz + (Math.random() - 0.5) * 220;
       }
-      // window grid, some lit warm, most dark glass
-      var cols = 6, rows = 9, ww = w / cols, wh = h / rows;
-      for (var y = 0; y < rows; y++) {
-        for (var x = 0; x < cols; x++) {
-          var lit = r() < litRatio;
-          g.fillStyle = lit ? '#ffd98a' : (r() < 0.5 ? '#202b3a' : '#2c3a4d');
-          g.fillRect(x * ww + 4, y * wh + 5, ww - 8, wh - 10);
-          if (lit) { g.fillStyle = 'rgba(255,220,140,0.35)'; g.fillRect(x * ww + 4, y * wh + 5, ww - 8, 3); }
-        }
-      }
-      // floor bands and a ground-floor shopfront band
-      g.fillStyle = trim; g.fillRect(0, h - 26, w, 26);
-      g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, h - 28, w, 2);
-    });
-  }
-  function brickTexture(base, seed) {
-    var r = rand(seed);
-    return canvasTex(256, 256, function (g, w, h) {
-      g.fillStyle = base; g.fillRect(0, 0, w, h);
-      var bh = 16, bw = 42;
-      for (var y = 0; y < h / bh; y++) {
-        for (var x = -1; x < w / bw + 1; x++) {
-          var shade = 0.85 + r() * 0.3;
-          g.fillStyle = 'rgb(' + Math.floor(150 * shade) + ',' + Math.floor(84 * shade) + ',' + Math.floor(66 * shade) + ')';
-          g.fillRect(x * bw + (y % 2 ? bw / 2 : 0) + 1, y * bh + 1, bw - 2, bh - 2);
-        }
-      }
-    });
-  }
-  function asphaltTexture(seed) {
-    var r = rand(seed);
-    return canvasTex(256, 256, function (g, w, h) {
-      g.fillStyle = '#23262b'; g.fillRect(0, 0, w, h);
-      for (var i = 0; i < 2600; i++) {
-        var v = 20 + r() * 45;
-        g.fillStyle = 'rgb(' + v + ',' + v + ',' + (v + 4) + ')';
-        g.fillRect(r() * w, r() * h, 1.5, 1.5);
-      }
-      // cracks
-      g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 1;
-      for (var c = 0; c < 6; c++) {
-        g.beginPath(); var x = r() * w, y = r() * h;
-        g.moveTo(x, y);
-        for (var s = 0; s < 5; s++) { x += (r() - 0.5) * 40; y += (r() - 0.5) * 40; g.lineTo(x, y); }
-        g.stroke();
-      }
-    });
-  }
-  function roadTexture() {
-    return canvasTex(128, 256, function (g, w, h) {
-      g.fillStyle = '#23262b'; g.fillRect(0, 0, w, h);
-      for (var i = 0; i < 900; i++) {
-        var v = 22 + Math.random() * 38;
-        g.fillStyle = 'rgb(' + v + ',' + v + ',' + (v + 4) + ')';
-        g.fillRect(Math.random() * w, Math.random() * h, 1.5, 1.5);
-      }
-      // edge lines
-      g.fillStyle = '#d8d8c8'; g.fillRect(4, 0, 3, h); g.fillRect(w - 7, 0, 3, h);
-      // dashed centre line
-      g.fillStyle = '#f2d24b';
-      for (var y = 0; y < h; y += 64) g.fillRect(w / 2 - 2, y + 8, 4, 34);
-    });
-  }
-  function sidewalkTexture() {
-    return canvasTex(128, 128, function (g, w, h) {
-      g.fillStyle = '#8d8f94'; g.fillRect(0, 0, w, h);
-      for (var i = 0; i < 500; i++) {
-        var v = 120 + Math.random() * 40;
-        g.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
-        g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
-      }
-      g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 2;
-      g.strokeRect(1, 1, w - 2, h - 2);
-      g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.stroke();
-    });
-  }
-  function waterTexture() {
-    return canvasTex(256, 256, function (g, w, h) {
-      var grad = g.createLinearGradient(0, 0, 0, h);
-      grad.addColorStop(0, '#1d5f7a'); grad.addColorStop(0.5, '#17607f'); grad.addColorStop(1, '#0f4a66');
-      g.fillStyle = grad; g.fillRect(0, 0, w, h);
-      g.strokeStyle = 'rgba(255,255,255,0.16)'; g.lineWidth = 1.5;
-      for (var i = 0; i < 26; i++) {
-        var y = Math.random() * h, x = Math.random() * w, len = 20 + Math.random() * 60;
-        g.beginPath(); g.moveTo(x, y); g.lineTo(x + len, y); g.stroke();
-      }
-    });
-  }
-  function glowTexture() {
-    return canvasTex(128, 128, function (g, w, h) {
-      var grad = g.createRadialGradient(64, 64, 2, 64, 64, 62);
-      grad.addColorStop(0, 'rgba(255,255,255,1)');
-      grad.addColorStop(0.35, 'rgba(255,255,255,0.45)');
-      grad.addColorStop(1, 'rgba(255,255,255,0)');
-      g.fillStyle = grad; g.fillRect(0, 0, w, h);
-    });
-  }
-  function cloudTexture() {
-    return canvasTex(256, 128, function (g, w, h) {
-      g.clearRect(0, 0, w, h);
-      for (var i = 0; i < 26; i++) {
-        var x = 20 + Math.random() * (w - 40), y = 30 + Math.random() * (h - 55), r = 14 + Math.random() * 26;
-        var grad = g.createRadialGradient(x, y, 1, x, y, r);
-        grad.addColorStop(0, 'rgba(255,255,255,0.55)');
-        grad.addColorStop(1, 'rgba(255,255,255,0)');
-        g.fillStyle = grad;
-        g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
-      }
-    });
-  }
-  function neonTexture(word, color, sub) {
-    return canvasTex(512, 128, function (g, w, h) {
-      g.fillStyle = '#0d0a14'; g.fillRect(0, 0, w, h);
-      g.strokeStyle = color; g.lineWidth = 5; g.strokeRect(6, 6, w - 12, h - 12);
-      g.font = 'bold 64px Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.shadowColor = color; g.shadowBlur = 26;
-      g.fillStyle = color; g.fillText(word, w / 2, sub ? h / 2 - 12 : h / 2);
-      if (sub) { g.font = 'bold 26px Arial'; g.shadowBlur = 12; g.fillText(sub, w / 2, h - 26); }
-    });
-  }
-
-  SOL.textures = {
-    facadeDowntown: facadeTexture('#3d4a63', '#232c3d', 0.28, 11),
-    facadeMid: facadeTexture('#5b5648', '#2e2a22', 0.34, 23),
-    facadeNeon: facadeTexture('#4a2b4d', '#1c1420', 0.4, 37),
-    facadeLow: facadeTexture('#7a6a58', '#3a322a', 0.3, 51),
-    brick: brickTexture('#96543f', 7),
-    concrete: canvasTex(128, 128, function (g, w, h) {
-      g.fillStyle = '#9a9da2'; g.fillRect(0, 0, w, h);
-      for (var i = 0; i < 400; i++) { var v = 130 + Math.random() * 40; g.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')'; g.fillRect(Math.random() * w, Math.random() * h, 2, 2); }
-    }),
-    asphalt: asphaltTexture(3),
-    road: roadTexture(),
-    sidewalk: sidewalkTexture(),
-    water: waterTexture(),
-    glow: glowTexture(),
-    cloud: cloudTexture(),
-    neonPalms: neonTexture('PALMS', '#ff5fa2', 'HOTEL · POOL · BAR'),
-    neonCasino: neonTexture('CASINO', '#ffd75e', 'SLOTS · 24 HOURS'),
-    neonNeon: neonTexture('NEON', '#37e0ff', 'MILE'),
-    neonDiner: neonTexture('DINER', '#7dff8a', 'EAT · OPEN LATE'),
-    neonAmmu: neonTexture('AMMU', '#ff8a3c', 'NATION · GUNS'),
-  };
-
-  // ---- renderer / scene ----------------------------------------------------
-  function initGraphics() {
-    var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.12;
-    renderer.outputEncoding = THREE.sRGBEncoding;
-    document.getElementById('game').appendChild(renderer.domElement);
-
-    var scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x2a2f3a, 0.0016);
-    var camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 2400);
-    camera.position.set(0, 26, 60);
-
-    // Sky dome: gradient + sun disc + moon disc, all driven by uniforms.
-    var skyUniforms = {
-      topColor: { value: new THREE.Color(0x2f6fb8) },
-      horizonColor: { value: new THREE.Color(0xffb36b) },
-      sunDir: { value: new THREE.Vector3(0.4, 0.35, 0.2) },
-      sunColor: { value: new THREE.Color(0xffd9a0) },
-      moonDir: { value: new THREE.Vector3(-0.5, 0.6, -0.3) },
-      nightMix: { value: 0 },
-    };
-    var skyMat = new THREE.ShaderMaterial({
-      uniforms: skyUniforms, side: THREE.BackSide, depthWrite: false, fog: false,
-      vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-      fragmentShader: [
-        'varying vec3 vDir; uniform vec3 topColor; uniform vec3 horizonColor;',
-        'uniform vec3 sunDir; uniform vec3 sunColor; uniform vec3 moonDir; uniform float nightMix;',
-        'void main(){',
-        '  float h = clamp(vDir.y, -0.08, 1.0);',
-        '  vec3 col = mix(horizonColor, topColor, pow(max(h, 0.0), 0.62));',
-        '  float s = max(dot(normalize(vDir), normalize(sunDir)), 0.0);',
-        '  col += sunColor * (pow(s, 220.0) * 1.6 + pow(s, 10.0) * 0.30) * (1.0 - nightMix);',
-        '  float m = max(dot(normalize(vDir), normalize(moonDir)), 0.0);',
-        '  col += vec3(0.85, 0.9, 1.0) * (pow(m, 350.0) * 1.4 + pow(m, 24.0) * 0.10) * nightMix;',
-        '  col = mix(col, col * vec3(0.16, 0.20, 0.34), nightMix * 0.55);',
-        '  gl_FragColor = vec4(col, 1.0);',
-        '}',
-      ].join('\n'),
-    });
-    var sky = new THREE.Mesh(new THREE.SphereGeometry(1100, 32, 16), skyMat);
-    scene.add(sky);
-
-    // One shadow-casting directional light: sun by day, moon by night.
-    var sun = new THREE.DirectionalLight(0xffd9a0, 1.6);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -190; sun.shadow.camera.right = 190;
-    sun.shadow.camera.top = 190; sun.shadow.camera.bottom = -190;
-    sun.shadow.camera.near = 10; sun.shadow.camera.far = 900;
-    sun.shadow.bias = -0.0006;
-    scene.add(sun); scene.add(sun.target);
-
-    var hemi = new THREE.HemisphereLight(0x9db8e8, 0x3a3230, 0.75);
-    scene.add(hemi);
-
-    // Drifting cloud billboards.
-    var clouds = [];
-    for (var i = 0; i < 14; i++) {
-      var sm = new THREE.SpriteMaterial({ map: SOL.textures.cloud, transparent: true, opacity: 0.5 + Math.random() * 0.3, depthWrite: false, fog: false });
-      var sp = new THREE.Sprite(sm);
-      sp.position.set(-500 + Math.random() * 1000, 160 + Math.random() * 120, -500 + Math.random() * 1000);
-      sp.scale.set(180 + Math.random() * 160, 60 + Math.random() * 40, 1);
-      sp.userData.drift = 1.5 + Math.random() * 2.5;
-      scene.add(sp); clouds.push(sp);
     }
-
-    // Rain: a box of falling streaks around the camera, hidden until it rains.
-    var rainGeo = new THREE.BufferGeometry();
-    var rainCount = 1600, rainPos = new Float32Array(rainCount * 3);
-    for (var j = 0; j < rainCount; j++) {
-      rainPos[j * 3] = (Math.random() - 0.5) * 140;
-      rainPos[j * 3 + 1] = Math.random() * 60;
-      rainPos[j * 3 + 2] = (Math.random() - 0.5) * 140;
-    }
-    rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
-    var rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({ color: 0xaac4de, size: 0.5, transparent: true, opacity: 0.55 }));
-    rain.visible = false; rain.frustumCulled = false;
-    scene.add(rain);
-
-    SOL.renderer = renderer; SOL.scene = scene; SOL.camera = camera;
-    SOL.sun = sun; SOL.hemi = hemi; SOL.skyMat = skyMat; SOL.skyUniforms = skyUniforms;
-    SOL.clouds = clouds; SOL.rain = rain; SOL.rainPos = rainPos;
-
-    window.addEventListener('resize', function () {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+    pos.needsUpdate = true;
   }
-  SOL.initGraphics = initGraphics;
-
-  // Glow sprite helper: a soft additive halo for neon, lamps and headlights.
-  function glowSprite(color, scale, opacity) {
-    var m = new THREE.SpriteMaterial({
-      map: SOL.textures.glow, color: color, transparent: true,
-      opacity: opacity == null ? 0.85 : opacity, blending: THREE.AdditiveBlending, depthWrite: false,
-    });
-    var s = new THREE.Sprite(m);
-    s.scale.set(scale, scale, 1);
-    return s;
+  // Keep the sun's shadow box centred on the player so shadows stay crisp.
+  if (gfx.sun && cameraPos && gfx.sunDir) {
+    gfx.sun.position.set(cameraPos.x + gfx.sunDir.x, gfx.sunDir.y, cameraPos.z + gfx.sunDir.z);
+    gfx.sun.target.position.set(cameraPos.x, 0, cameraPos.z);
   }
-  SOL.glowSprite = glowSprite;
+}
 
-  // A neon sign: emissive plane plus a coloured halo sprite behind it, so the
-  // sign blooms at dusk and night without any post-processing pass.
-  function makeNeonSign(tex, w, h, haloColor) {
-    var g = new THREE.Group();
-    var mat = new THREE.MeshBasicMaterial({ map: tex });
-    var face = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
-    var back = new THREE.Mesh(new THREE.PlaneGeometry(w + 0.4, h + 0.4),
-      new THREE.MeshBasicMaterial({ color: 0x0a0a12 }));
-    back.position.z = -0.06;
-    var halo = glowSprite(haloColor, Math.max(w, h) * 1.7, 0.55);
-    halo.position.z = 0.25;
-    g.add(back); g.add(face); g.add(halo);
-    g.userData.halo = halo;
-    return g;
-  }
-  SOL.makeNeonSign = makeNeonSign;
-
-  // ---- day / night / weather ----------------------------------------------
-  var DAY = {
-    top: new THREE.Color(0x2f6fb8), horizon: new THREE.Color(0xbfd9ee),
-    sun: new THREE.Color(0xfff2cf), fog: new THREE.Color(0xa8c4de), hemiSky: new THREE.Color(0x9db8e8),
-  };
-  var DUSK = {
-    top: new THREE.Color(0x4a3a72), horizon: new THREE.Color(0xff9e57),
-    sun: new THREE.Color(0xffb36b), fog: new THREE.Color(0x8a6a72), hemiSky: new THREE.Color(0x8a7ab8),
-  };
-  var NIGHT = {
-    top: new THREE.Color(0x060a18), horizon: new THREE.Color(0x131a2e),
-    sun: new THREE.Color(0x8fa8d8), fog: new THREE.Color(0x0a0f1c), hemiSky: new THREE.Color(0x2a3450),
-  };
-  var _c1 = new THREE.Color(), _c2 = new THREE.Color(), _v = new THREE.Vector3();
-
-  // hour: 0-24. Returns darkness 0..1. Drives sun position, sky, fog and lamps.
-  function setTimeOfDay(hour) {
-    SOL.time.hour = ((hour % 24) + 24) % 24;
-    var h = SOL.time.hour;
-    // daylight factor: 1 at noon, 0 at midnight, smooth at dawn/dusk
-    var dayF = Math.max(0, Math.sin((h - 6) / 12 * Math.PI));
-    var duskF = Math.max(0, 1 - Math.abs(h - 18.2) / 2.2) + Math.max(0, 1 - Math.abs(h - 6.4) / 1.6);
-    duskF = Math.min(1, duskF);
-    var night = 1 - Math.max(dayF, duskF * 0.55);
-    SOL.night = night;
-
-    var sunAngle = (h - 6) / 12 * Math.PI; // 0 at dawn, PI at dusk
-    var elev = Math.sin(sunAngle), azim = Math.cos(sunAngle);
-    _v.set(azim * 0.8, Math.max(elev, -0.25), 0.45).normalize();
-    SOL.skyUniforms.sunDir.value.copy(_v);
-    SOL.skyUniforms.nightMix.value = night;
-    SOL.skyUniforms.moonDir.value.set(-0.45, 0.62, -0.35).normalize();
-
-    // sky colours: day -> dusk -> night, blended channel by channel
-    lerpColor(DAY.top, DUSK.top, duskF, _c1); lerpColor(_c1, NIGHT.top, night, _c2);
-    SOL.skyUniforms.topColor.value.copy(_c2);
-    lerpColor(DAY.horizon, DUSK.horizon, duskF, _c1); lerpColor(_c1, NIGHT.horizon, night, _c2);
-    SOL.skyUniforms.horizonColor.value.copy(_c2);
-    lerpColor(DAY.sun, DUSK.sun, duskF, _c1); lerpColor(_c1, NIGHT.sun, night, _c2);
-    SOL.skyUniforms.sunColor.value.copy(_c2);
-    lerpColor(DAY.fog, DUSK.fog, duskF, _c1); lerpColor(_c1, NIGHT.fog, night, _c2);
-    SOL.scene.fog.color.copy(_c2);
-
-    // the one directional light: warm low sun at dusk, cool moon at night
-    if (night > 0.5) {
-      SOL.sun.position.set(-160, 260, -120);
-      SOL.sun.color.setHex(0x8fa8d8);
-      SOL.sun.intensity = 0.55;
-    } else {
-      SOL.sun.position.set(azim * 320, Math.max(elev, 0.12) * 320 + 40, 150);
-      SOL.sun.color.copy(_c2);
-      SOL.sun.intensity = 1.1 + dayF * 0.7;
-    }
-    SOL.sun.target.position.set(0, 0, 0);
-    SOL.sun.target.updateMatrixWorld();
-
-    lerpColor(DAY.hemiSky, NIGHT.hemiSky, night, _c1);
-    SOL.hemi.color.copy(_c1);
-    SOL.hemi.intensity = 0.85 - night * 0.45;
-    SOL.renderer.toneMappingExposure = 1.12 - night * 0.12;
-
-    var fogBase = 0.0016 + night * 0.0011 + (SOL.weather === 'rain' ? 0.0026 : 0) + (SOL.weather === 'haze' ? 0.0022 : 0);
-    SOL.scene.fog.density = fogBase;
-    SOL.lampGlow = night; // city.js / vehicles.js read this for emissive + halos
-    if (SOL.onTimeChange) SOL.onTimeChange(night, dayF);
-    return night;
-  }
-  SOL.setTimeOfDay = setTimeOfDay;
-
-  function setWeather(kind) {
-    SOL.weather = kind;
-    SOL.rain.visible = kind === 'rain';
-    SOL.rainAmt = kind === 'rain' ? 1 : 0;
-    if (SOL.onWeatherChange) SOL.onWeatherChange(kind);
-    setTimeOfDay(SOL.time.hour); // re-apply fog for the new weather
-  }
-  SOL.setWeather = setWeather;
-
-  // Per-frame visuals: cloud drift, water shimmer, rain fall, sun shadow follow.
-  function updateGraphics(dt, focus) {
-    for (var i = 0; i < SOL.clouds.length; i++) {
-      var c = SOL.clouds[i];
-      c.position.x += c.userData.drift * dt;
-      if (c.position.x > 620) c.position.x = -620;
-      c.material.opacity = 0.35 + (1 - SOL.night) * 0.35;
-    }
-    if (SOL.textures.water) { SOL.textures.water.offset.x += dt * 0.008; SOL.textures.water.offset.y += dt * 0.004; }
-    if (SOL.rain.visible && focus) {
-      var p = SOL.rainPos;
-      for (var j = 0; j < p.length; j += 3) {
-        p[j + 1] -= 55 * dt;
-        p[j] += 6 * dt;
-        if (p[j + 1] < 0) { p[j + 1] = 55 + Math.random() * 5; p[j] = focus.x + (Math.random() - 0.5) * 140; p[j + 2] = focus.z + (Math.random() - 0.5) * 140; }
-      }
-      SOL.rain.geometry.attributes.position.needsUpdate = true;
-      SOL.rain.position.set(focus.x, 0, focus.z);
-    }
-    // keep the shadow camera centred on the action
-    if (focus) {
-      SOL.sun.target.position.set(focus.x, 0, focus.z);
-      SOL.sun.position.set(focus.x + (SOL.night > 0.5 ? -160 : 240), SOL.night > 0.5 ? 260 : 260, focus.z + 150);
-      SOL.sun.target.updateMatrixWorld();
-    }
-  }
-  SOL.updateGraphics = updateGraphics;
-})();
+/** Is it currently dark (night) in-game? */
+export function isNight() {
+  const h = G.time;
+  return h < 6 || h >= 19.5;
+}

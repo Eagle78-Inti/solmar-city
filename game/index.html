@@ -3,138 +3,141 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Solmar City — Open World</title>
+<title>Solmar City — The Solmar Reign</title>
 <link rel="icon" href="data:,">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
-    background: #0b0e14; font-family: "Segoe UI", system-ui, -apple-system, Arial, sans-serif; }
-  #game { position: fixed; inset: 0; }
-  #game canvas { display: block; }
-  .panel { position: absolute; color: #fff; background: rgba(8, 10, 16, 0.62);
-    border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 10px;
-    padding: 8px 12px; backdrop-filter: blur(2px); user-select: none; }
-  #stats { top: 12px; left: 12px; min-width: 210px; }
-  #stats .cash { color: #7dff8a; font-size: 26px; font-weight: 800; line-height: 1.1; }
-  #stats .respect { color: #ffd75e; font-size: 13px; margin-top: 2px; }
-  .bar { height: 8px; background: rgba(255,255,255,0.18); border-radius: 4px; margin-top: 5px; overflow: hidden; }
-  .bar > div { height: 100%; border-radius: 4px; }
-  #healthBar { background: linear-gradient(90deg, #37d67a, #9be15d); width: 100%; }
-  #armorBar { background: linear-gradient(90deg, #4aa8ff, #9fd8ff); width: 0%; }
-  #respectBar { background: linear-gradient(90deg, #f6b73c, #ffd75e); width: 0%; }
-  #stats .sub { font-size: 12px; color: #dfe6f2; margin-top: 5px; }
-  #wanted { top: 12px; right: 12px; font-size: 26px; letter-spacing: 4px; text-align: right; }
-  #wanted .star { color: #ffd75e; text-shadow: 0 0 8px rgba(255, 200, 60, 0.8); }
-  #wanted .star.off { color: rgba(255,255,255,0.25); text-shadow: none; }
-  #clock { top: 64px; right: 12px; text-align: right; font-size: 14px; }
-  #clock .t { font-size: 20px; font-weight: 700; }
-  #objective { left: 50%; bottom: 92px; transform: translateX(-50%); text-align: center;
-    font-size: 15px; max-width: 640px; }
-  #objective .mname { color: #ffd75e; font-weight: 700; }
-  #toast { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); font-size: 30px; font-weight: 800;
-    color: #ffd75e; text-shadow: 0 2px 14px rgba(0,0,0,0.7); display: none; text-align: center; }
-  #toast small { display: block; font-size: 16px; color: #fff; margin-top: 4px; }
-  #minimap { position: absolute; right: 12px; bottom: 12px; width: 208px; height: 208px;
-    border: 1px solid rgba(255,255,255,0.25); border-radius: 10px; background: rgba(8,10,16,0.6); }
-  #crosshair { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
-    margin: -11px 0 0 -11px; display: none; pointer-events: none; }
-  #crosshair:before, #crosshair:after { content: ""; position: absolute; background: #fff; }
-  #crosshair:before { left: 10px; top: 0; width: 2px; height: 22px; }
-  #crosshair:after { left: 0; top: 10px; width: 22px; height: 2px; }
-  #hint { left: 12px; bottom: 12px; font-size: 12px; color: #cfd8e6; max-width: 300px; }
-  #damage { position: fixed; inset: 0; pointer-events: none; opacity: 0;
-    background: radial-gradient(ellipse at center, transparent 55%, rgba(255,0,0,0.45) 100%); }
-  #vignette { position: fixed; inset: 0; pointer-events: none;
-    background: radial-gradient(ellipse at center, transparent 62%, rgba(0,0,0,0.38) 100%); }
-  .overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; color: #fff; background: rgba(5, 7, 12, 0.72); z-index: 10; text-align: center; }
-  .overlay h1 { font-size: 58px; margin: 0; letter-spacing: 3px; color: #ffd75e;
-    text-shadow: 0 4px 24px rgba(255, 190, 60, 0.45); }
-  .overlay h2 { font-size: 20px; font-weight: 400; color: #dfe6f2; margin: 6px 0 18px; }
-  .overlay .keys { font-size: 14px; line-height: 1.9; color: #c8d2e0; background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 12px 22px; }
-  .overlay .keys b { color: #ffd75e; }
-  .overlay .go { margin-top: 22px; font-size: 18px; color: #7dff8a; }
-  .hidden { display: none !important; }
-  #shop { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
-    background: rgba(5,7,12,0.7); z-index: 11; }
-  #shop .box { background: #101623; border: 1px solid rgba(255,215,94,0.5); border-radius: 12px;
-    padding: 20px 26px; color: #fff; width: 380px; }
-  #shop h2 { margin: 0 0 4px; color: #ffd75e; }
-  #shop .item { display: flex; justify-content: space-between; padding: 8px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 15px; }
-  #shop .item button { background: #ffd75e; border: 0; border-radius: 6px; padding: 4px 12px;
-    font-weight: 700; cursor: pointer; }
-  #shop .item button:disabled { background: #555; color: #aaa; cursor: default; }
-  #shop .close { margin-top: 14px; color: #9fb0c3; font-size: 13px; text-align: center; }
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0a0616; font-family: Arial, Helvetica, sans-serif; color: #fff; }
+  #game { display: block; width: 100vw; height: 100vh; }
+  .panel { position: absolute; background: rgba(8, 8, 18, 0.72); border-radius: 10px; padding: 10px 14px; backdrop-filter: blur(2px); }
+  #hudTL { top: 12px; left: 12px; min-width: 230px; }
+  #cash { font-size: 28px; font-weight: bold; color: #7dff6a; line-height: 1.1; }
+  #respect { font-size: 12px; color: #ffd23e; margin-top: 2px; }
+  #rank, #role, #district { font-size: 12px; color: #cfd8e0; }
+  #hudTR { top: 12px; right: 12px; text-align: right; }
+  #wanted { font-size: 22px; color: #ffd23e; letter-spacing: 2px; }
+  #clock { font-size: 18px; font-weight: bold; }
+  #weather, #radio { font-size: 12px; color: #cfd8e0; }
+  #hudBL { bottom: 12px; left: 12px; padding: 6px; }
+  #minimap { display: block; border-radius: 6px; }
+  #missionBanner { position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%); text-align: center; background: rgba(8, 8, 18, 0.72); border-radius: 10px; padding: 8px 22px; }
+  #missionTitle { font-size: 16px; font-weight: bold; color: #ffd23e; }
+  #missionSub { font-size: 13px; color: #fff; }
+  #hudBR { bottom: 12px; right: 12px; text-align: right; font-size: 13px; }
+  #health, #armour, #weapon { margin-top: 2px; }
+  #driveRow { display: none; margin-top: 6px; }
+  .barWrap { width: 170px; height: 8px; background: rgba(255,255,255,0.18); border-radius: 4px; margin-top: 3px; }
+  #gripBar { height: 100%; width: 50%; background: #3ec6ff; border-radius: 4px; }
+  #condBar { height: 100%; width: 100%; background: #7dff6a; border-radius: 4px; }
+  #controls { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 11px; color: rgba(255,255,255,0.75); background: rgba(8,8,18,0.6); border-radius: 8px; padding: 6px 12px; white-space: nowrap; }
+  #subtitle { position: absolute; bottom: 170px; left: 50%; transform: translateX(-50%); font-size: 17px; font-style: italic; color: #ffe9a8; text-shadow: 0 2px 4px #000; display: none; max-width: 80%; text-align: center; }
+  #toast { position: absolute; top: 90px; left: 50%; transform: translateX(-50%); font-size: 15px; background: rgba(8,8,18,0.8); border-radius: 8px; padding: 8px 16px; display: none; }
+  #titleScreen { position: absolute; inset: 0; display: block; background: linear-gradient(180deg, rgba(20,8,40,0.88), rgba(255,110,60,0.55) 55%, rgba(10,6,22,0.92)); text-align: center; padding-top: 13vh; }
+  #titleScreen h1 { font-size: 64px; margin: 0; letter-spacing: 4px; color: #ffd23e; text-shadow: 0 4px 24px rgba(255,90,40,0.8); }
+  #titleScreen h2 { font-size: 22px; color: #fff; margin: 8px 0 4px; }
+  #titleScreen p { font-size: 14px; color: #e8e0ff; max-width: 560px; margin: 10px auto; line-height: 1.5; }
+  #titleScreen button { display: block; margin: 12px auto; padding: 12px 42px; font-size: 17px; font-weight: bold; background: #ffd23e; color: #1a1428; border: 0; border-radius: 8px; cursor: pointer; }
+  #titleScreen button:hover { background: #ffe27a; }
+  #briefing { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 560px; max-width: 90vw; background: rgba(10, 10, 26, 0.94); border: 1px solid #ffd23e; border-radius: 12px; padding: 20px 24px; display: none; }
+  .briefTitle { font-size: 24px; font-weight: bold; color: #ffd23e; }
+  .briefAct { font-size: 13px; color: #9fd8ff; margin: 4px 0 12px; }
+  .briefLine { font-size: 14px; line-height: 1.5; margin: 6px 0; }
+  .briefLine b { color: #ff9a5a; }
+  .briefStages { font-size: 13px; font-weight: bold; color: #7dff6a; margin-top: 12px; }
+  .briefStage { font-size: 13px; margin: 3px 0 3px 14px; }
+  #briefAccept { margin-top: 14px; padding: 10px 30px; font-size: 15px; font-weight: bold; background: #ffd23e; color: #1a1428; border: 0; border-radius: 8px; cursor: pointer; }
+  #mapOverlay { position: absolute; inset: 0; background: rgba(6, 10, 8, 0.92); display: none; text-align: center; padding-top: 20px; }
+  #mapOverlay h2 { margin: 0 0 10px; color: #ffd23e; }
+  #mapCanvas { border-radius: 8px; }
+  #pauseMenu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 520px; max-width: 92vw; background: rgba(10, 10, 26, 0.95); border: 1px solid #3ec6ff; border-radius: 12px; padding: 18px 22px; display: none; }
+  #pauseMenu h2 { margin: 0 0 10px; color: #3ec6ff; }
+  #pauseMenu button { padding: 8px 18px; margin: 0 6px 12px 0; font-size: 14px; font-weight: bold; background: #223; color: #fff; border: 1px solid #3ec6ff; border-radius: 6px; cursor: pointer; }
+  .statRow, .storyRow { display: flex; justify-content: space-between; font-size: 14px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .statRow b, .storyRow b { color: #ffd23e; }
+  .storyTitle { font-size: 14px; color: #9fd8ff; margin-bottom: 8px; }
+  .storyAct { font-size: 14px; font-weight: bold; color: #7dff6a; margin: 10px 0 4px; }
+  .storyRow i { color: #9a9a9a; font-style: normal; font-size: 12px; }
+  #shopPanel { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 480px; max-width: 92vw; background: rgba(10, 10, 26, 0.95); border: 1px solid #ff6a3e; border-radius: 12px; padding: 18px 22px; display: none; }
+  .shopTitle { font-size: 20px; font-weight: bold; color: #ff6a3e; margin-bottom: 10px; }
+  .shopRow { display: flex; justify-content: space-between; align-items: center; font-size: 14px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .shopRow i { color: #9a9a9a; font-size: 12px; }
+  .shopRow button { padding: 6px 14px; background: #ffd23e; color: #1a1428; border: 0; border-radius: 6px; font-weight: bold; cursor: pointer; }
+  .shopRow button:disabled { background: #555; color: #aaa; cursor: default; }
+  #shopClose { margin-top: 12px; padding: 8px 18px; background: #223; color: #fff; border: 1px solid #ff6a3e; border-radius: 6px; cursor: pointer; }
+  #wheel { position: absolute; bottom: 150px; left: 50%; transform: translateX(-50%); display: none; gap: 8px; }
+  .wheelSlot { width: 92px; text-align: center; background: rgba(10,10,26,0.85); border: 2px solid #444; border-radius: 8px; padding: 8px 4px; font-size: 12px; }
+  .wheelSlot.active { border-color: #ffd23e; background: rgba(60,50,10,0.9); }
+  .wheelSlot.locked { opacity: 0.45; }
 </style>
 </head>
 <body>
-<div id="game"></div>
-<div id="vignette"></div>
-<div id="damage"></div>
-<div id="stats" class="panel">
-  <div class="cash" id="cash">$800</div>
-  <div class="respect" id="respectLine">RESPECT 0/100</div>
-  <div class="bar"><div id="respectBar"></div></div>
-  <div class="bar"><div id="healthBar"></div></div>
-  <div class="bar"><div id="armorBar"></div></div>
-  <div class="sub" id="weaponLine">Pistol · 12/12</div>
-  <div class="sub" id="charLine">Jason · Solmar City</div>
-  <div class="sub" id="speedLine">0 mph · foot</div>
-</div>
-<div id="wanted" class="panel"><span class="star off">★</span><span class="star off">★</span><span class="star off">★</span><span class="star off">★</span><span class="star off">★</span></div>
-<div id="clock" class="panel"><div class="t" id="timeText">17:45</div><div id="weatherText">Clear · Vice Radio</div></div>
-<div id="objective" class="panel"><span class="mname" id="missionName">Welcome to Solmar City</span><br><span id="objectiveText">Press Enter to start. See Marta to begin your first job.</span></div>
-<div id="toast"></div>
-<canvas id="minimap" width="208" height="208"></canvas>
-<div id="crosshair"></div>
-<div id="hint" class="panel">WASD move/drive · Mouse drag camera · E enter/exit · Click shoot · R reload · C switch Jason/Lucia · V radio · T taxi · Y courier · M mission · Esc pause</div>
+<canvas id="game"></canvas>
 
-<div id="startScreen" class="overlay">
+<div id="hudTL" class="panel">
+  <div id="cash">$800</div>
+  <div id="respect">RESPECT 0/100</div>
+  <div id="rank">Rank 1 · 0 RP</div>
+  <div id="role">Nobody</div>
+  <div id="district">Downtown · Neutral · 0</div>
+</div>
+
+<div id="hudTR" class="panel">
+  <div id="wanted">☆☆☆☆☆</div>
+  <div id="clock">Day 1 · 18:12</div>
+  <div id="weather">Clear</div>
+  <div id="radio">Vice FM 88.4 — Sunset Drive</div>
+</div>
+
+<div id="hudBL" class="panel"><canvas id="minimap" width="180" height="180"></canvas></div>
+
+<div id="missionBanner"><div id="missionTitle"></div><div id="missionSub"></div></div>
+
+<div id="hudBR" class="panel">
+  <div id="health">Health 100</div>
+  <div id="armour">Armour 40</div>
+  <div id="weapon">.38 Pistol 12/48</div>
+  <div id="driveRow"><span id="gripRow">GRIP 50 · Condition 100%</span>
+    <div class="barWrap"><div id="gripBar"></div></div>
+    <div class="barWrap"><div id="condBar"></div></div>
+  </div>
+</div>
+
+<div id="controls">WASD move/drive · Mouse drag camera · E interact · F enter/exit · Click shoot · R reload · 1–5 weapons · Q wheel · C switch Jason/Lucia · V radio · T taxi · Y courier · M map · Esc pause</div>
+<div id="subtitle"></div>
+<div id="toast"></div>
+
+<div id="titleScreen">
   <h1>SOLMAR CITY</h1>
-  <h2>An open-world crime story in the sun-soaked state of Leonida</h2>
-  <div class="keys">
-    <b>W A S D</b> — move / drive &nbsp;·&nbsp; <b>Mouse drag</b> — camera<br>
-    <b>E</b> — enter / exit car, boat, helicopter &nbsp;·&nbsp; <b>Click</b> — shoot<br>
-    <b>R</b> — reload &nbsp;·&nbsp; <b>C</b> — switch Jason / Lucia &nbsp;·&nbsp; <b>V</b> — radio<br>
-    <b>T</b> — taxi job &nbsp;·&nbsp; <b>Y</b> — courier job &nbsp;·&nbsp; <b>M</b> — mission info<br>
-    <b>Esc</b> — pause &nbsp;·&nbsp; progress saves automatically
-  </div>
-  <div class="go" id="startPrompt">Press Enter to play</div>
+  <h2>The Solmar Reign</h2>
+  <p>Seven districts. Three acts. Eight missions. Two endings. Dario owes Rook fifty grand — work it off, or take the crown. Drive, steal, fight and fly your way across Solmar City.</p>
+  <button id="btnNew">NEW GAME</button>
+  <button id="btnContinue">CONTINUE</button>
+  <p>Best with keyboard and mouse · Sound on for the radio · M for the full city map, Esc for career stats</p>
 </div>
-<div id="pauseScreen" class="overlay hidden">
-  <h1>PAUSED</h1>
-  <h2>Solmar City waits for no one. Except now.</h2>
-  <div class="keys">
-    <b>Esc</b> — resume &nbsp;·&nbsp; <b>K</b> — save now<br>
-    Cash, respect, missions, weapons and your garage are saved automatically.
-  </div>
-  <div id="pauseStats" style="margin-top:16px; color:#9fb0c3; font-size:14px;"></div>
-  <div class="go">Press Esc to resume</div>
+
+<div id="briefing"></div>
+
+<div id="mapOverlay"><h2>SOLMAR CITY — press M to close</h2><canvas id="mapCanvas" width="760" height="560"></canvas></div>
+
+<div id="pauseMenu">
+  <h2>PAUSED</h2>
+  <button id="btnStats">Career stats</button>
+  <button id="btnStory">Story</button>
+  <button id="btnResume">Resume (Esc)</button>
+  <div id="statsBody"></div>
+  <div id="storyBody"></div>
 </div>
-<div id="wastedScreen" class="overlay hidden">
-  <h1 style="color:#ff5d5d; text-shadow: 0 4px 24px rgba(255,60,60,0.45);">WASTED</h1>
-  <h2 id="wastedText">The hospital patched you up. That will be $200.</h2>
-  <div class="go">Press Enter to get back on your feet</div>
-</div>
-<div id="shop">
-  <div class="box">
-    <h2>AMMU-NATION</h2>
-    <div style="color:#9fb0c3; font-size:13px; margin-bottom:8px;">Cash: <span id="shopCash">$800</span> · press Esc to leave</div>
-    <div id="shopItems"></div>
-    <div class="close">Weapons are yours to keep. Ammo is not.</div>
-  </div>
-</div>
-<script src="vendor/three.min.js"></script>
-<script src="src/graphics.js"></script>
-<script src="src/city.js"></script>
-<script src="src/vehicles.js"></script>
-<script src="src/player.js"></script>
-<script src="src/combat.js"></script>
-<script src="src/missions.js"></script>
-<script src="src/economy.js"></script>
-<script src="src/audio.js"></script>
-<script src="src/hud.js"></script>
-<script src="src/main.js"></script>
+
+<div id="shopPanel"></div>
+<div id="wheel"></div>
+
+<script type="module">
+import { init } from './src/main.js';
+init();
+</script>
 </body>
 </html>
+
+<div id="versionTag" style="position:absolute;top:12px;left:50%;transform:translateX(-50%);font-size:11px;color:rgba(255,255,255,0.6);background:rgba(8,8,18,0.55);border-radius:6px;padding:3px 10px;">Solmar City v10 · The Solmar Reign · 7 districts · 3 acts · 8 missions · 2 endings</div>

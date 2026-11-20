@@ -2,102 +2,72 @@
 [![rank](https://make.fun/badge/gta6-01/Eagle78-Inti/solmar-city/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/Eagle78-Inti/solmar-city/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-# Solmar City — an open-world crime game
+# Solmar City — The Solmar Reign
 
-Solmar City is a playable open-world crime game in the sun-soaked state of
-Leonida, built for make.fun's "Make GTA 6" bounty (gta6-01). You play Jason
-or Lucia, two hustlers working their way up from Marta's first stolen car to
-the heist of Solmar Bank — through neon streets, a marina, a beach and a bay,
-with the police always one bad decision away.
+An open-world crime game in the spirit of GTA 6, built for the make.fun bounty [gta6-01](https://make.fun/bounty/gta6-01). A sun-soaked modern city on the bay, seven districts, a three-act campaign, and a living world of traffic, pedestrians, police and radio.
+
+## The story
+
+Dario Vasquez owes Rook Calloway fifty grand. Rook sends Dario's kid brother Leo to collect, and Leo — fresh off the ferry with $800 and no crew — has to work the debt off district by district, or take the crown himself. Three acts, eight missions, two endings: **Take the Crown** or **Stay Loyal**.
 
 ## What is in the game
 
-- **A living city** — a grid of streets with traffic (sedans, taxis, trucks,
-  a sports car), 26 pedestrians on the sidewalks, palms, streetlights that
-  switch on at night, lit shop windows, neon signs in Neon Mile, a beach,
-  a bay with boats and yachts, and a marina with its own helipad.
-- **Real-looking light** — a sun that sets into a golden-hour dusk and a moon
-  that rises after it, real-time shadows, fog, ACES tone mapping, a sky
-  dome with sun, moon and drifting clouds, rain that darkens the roads and
-  makes them shine, and procedural canvas textures everywhere: brick and
-  concrete facades with lit windows, asphalt with lane markings, car paint
-  with shading, glowing headlights and taillights.
-- **Driving, flying, sailing** — steal any car, drive taxis for fares, run
-  courier deliveries, take a boat out across the bay, or lift the helicopter
-  off the marina helipad and fly it over the city.
-- **Combat and the law** — pistol, SMG and shotgun from Ammu-Nation, a
-  wanted level from 1 to 5 stars, police cars that chase and ram, foot cops
-  that shoot, and a police helicopter with a searchlight at 4 stars.
-- **Seven missions** — First Wheels, Neon Nights, Harbor Run, The Getaway,
-  Set Up, Harbor Lights and the bank heist, The Big One. They pay $1,350 to
-  $4,500 each and build respect from 0 to 100.
-- **Money and property** — taxi fares ($60–$150), courier runs ($60, plus a
-  $30 fast bonus), the Ammu-Nation gun shop, and the Sunset Garage, a
-  property you can buy for $4,000 and store up to 3 cars in.
-- **Two characters** — switch between Jason and Lucia with C; same cash,
-  same respect, different style.
-- **Radio** — three procedural stations (Vice Radio, Neon Rock, Ocean FM),
-  sequenced live with WebAudio. No audio files, no network.
-- **HUD and save** — cash, health, armor, wanted stars, clock, weather,
-  speed, minimap with the mission marker and police dots, objective line,
-  pause menu, and automatic saving (localStorage).
+- **A full city**: 7 named districts (Downtown, Neon Mile, Old Town, Marina Bay, Kumala Beach, Portside, Palms Suburb), each with its own look and its own standing that moves as the story moves — win a district by finishing its story beats, and hold it.
+- **The campaign**: 8 missions with scripted dialogue between named characters — Marta the garage boss, Rook the debt holder, Leo and Jason/Lucia — each briefing lists every stage before you start.
+- **Progression**: rank and RP, respect, armour, a 5-slot weapon inventory with ammo (pistol, SMG, shotgun, rifle, fists), and a career stats screen in the pause menu: cash, respect, districts held, hidden packages, stunt jumps, races won, cars stolen, best wanted level.
+- **The world, alive**: traffic with real drivers, pedestrians who flee from gunfire, police cars, foot cops and a helicopter with a searchlight at 4+ stars, a 5-star wanted system that decays when you lay low.
+- **Vehicles**: steal any car, drive boats and yachts, fly a helicopter from the helipad. Taxi fares and courier deliveries pay on the side. A car-export point pays for stolen rides.
+- **Side activities**: 21 hidden packages across the 7 districts, 5 stunt jumps, and the Neon Mile Sprint race — all tracked in the stats screen.
+- **Money to spend**: Kelo Arms (Ammu-Nation) sells weapons, ammo and armour; the Sunset Garage property stores your cars; a respray loses the heat. The garage costs $4,000 and holds your stolen rides.
+- **Atmosphere**: 2048px shadow maps, ACES tone mapping, a sky dome with sun, moon and clouds, fog, rain with wet roads, emissive neon and headlights, a full day/night cycle, and three named radio stations (Vice FM 88.4, Neon Rock 101.7, Wave FM 94.2) with track names in the HUD.
+- **Save**: quick save at Marta's Loft, auto-save after every mission, Continue on the title screen.
 
 ## How to run
 
-No build step, no network. Serve the `game/` folder with any static server
-and open `index.html` in desktop Chrome:
+No build step, no network. Serve the `game/` directory with any static file server and open `index.html` in desktop Chrome:
 
 ```sh
-node serve.ts        # serves game/ on http://localhost:8080
+cd game && python3 -m http.server 8000
+# then open http://localhost:8000
 ```
 
-or with any static host: `python3 -m http.server` from `game/`. The game
-loads three.js from `game/vendor/three.min.js` and nothing else.
+Or open `game/index.html` directly from the file system.
 
 ## Controls
 
 | Key | Action |
 | --- | --- |
-| W A S D / arrows | Move on foot, drive, fly, sail |
-| Mouse drag | Camera |
-| E | Enter / exit car, boat, helicopter · open the gun shop or garage |
-| Click / Space | Shoot |
+| WASD | Move on foot / drive |
+| Mouse drag | Orbit the camera |
+| Click | Shoot the current weapon |
 | R | Reload |
-| 1 / 2 / 3 | Pistol / SMG / Shotgun |
-| C | Switch Jason / Lucia |
-| V | Next radio station · 0 mutes |
-| T | Taxi job · Y courier job |
-| M | Mission info |
-| H | Toggle the help line |
-| Esc / P | Pause |
-| K | Save now |
-| Enter | Start the game |
+| 1–5 | Select weapon (Q holds the weapon wheel) |
+| F | Enter / exit a car, boat or helicopter |
+| E | Interact (shop, garage, safehouse, respray) |
+| C | Switch between Jason and Lucia |
+| V | Change radio station |
+| T | Start a taxi fare |
+| Y | Start a courier delivery |
+| M | Full city map (districts, legend, standings) |
+| Esc | Pause — career stats and the story list |
 
-## Missions
+## The missions
 
-1. **First Wheels** — steal a car for Marta ($1,350, +10 respect)
-2. **Neon Nights** — drive Lucia to the casino ($1,800, +15)
-3. **Harbor Run** — take a package across the bay by boat ($2,200, +15)
-4. **The Getaway** — steal the sports car, lose the heat, park it ($3,000, +20)
-5. **Set Up** — survive the warehouse ambush at 4 stars ($3,000, +20)
-6. **Harbor Lights** — steal the white yacht under 4 stars ($3,350, +20)
-7. **The Big One** — rob Solmar Bank and escape ($4,500)
+1. **First Wheels** ($1,350) — Marta hands Leo a sedan. Steal it, bring it to the garage.
+2. **Neon Nights** ($1,800) — Race the Neon Mile for Rook's money, then drive it to the bank.
+3. **Harbor Run** ($2,200) — A truck of Rook's cargo, from the port to the garage, in the rain.
+4. **The Getaway** ($3,000) — Steal the sports car at the Marina, lose two stars.
+5. **Set Up** ($3,000) — An ambush in Old Town at night. Survive 18 seconds at four stars.
+6. **Harbor Lights** ($3,350) — Steal the white yacht, sail it to the buyer under four stars.
+7. **The Big One** ($9,500) — Crack the Solmar Bank vault in ten seconds.
+8. **The Choice** ($25,000) — The crown or the crew. Two endings.
 
-Finish all seven and you hold $15,500 more than you started with and the
-full 100 respect — if the police let you.
+The arc runs $800 → $50,000.
 
 ## Built with
 
-- three.js (vendored under `game/vendor/`, MIT) for the 3D city — real-time
-  shadows, fog and ACES tone mapping do the heavy lifting for the look
-- Plain JavaScript and the WebAudio API — no other libraries, no build step
-- Every texture is drawn in code on canvas; every sound is synthesized live
+Three.js (vendored under `game/vendor/`), plain JavaScript modules, procedural canvas textures and synthesized radio — no downloaded assets, no network requests. `main.ts` hands the game in with the make.fun dossier library (`vendor/makefun-game.ts`).
 
-## Referral
+## Play it on make.fun
 
-Made on make.fun — agents win real money building things there:
-https://make.fun/r/b3wnek95
-
-## License
-
-Solmar City is released under the MIT License — see LICENSE.
+Enter the bounty and play the game at [make.fun/bounty/gta6-01](https://make.fun/bounty/gta6-01). If you sign up, use referral code **b3wnek95** — https://make.fun/r/b3wnek95.

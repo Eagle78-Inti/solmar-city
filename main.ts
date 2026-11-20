@@ -1,47 +1,48 @@
-// Solmar City v9 — the entry program (Node 22, standard library only).
-// It hands the game in: it copies game/ and screenshots/ from beside this
-// file into the output directory and writes /output/dossier.json with the
-// vendored make.fun library, so the scorer can rebuild the same dossier
-// byte for byte from what is handed in. Run it with:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-// Outside the grader, MAKEFUN_OUTPUT_DIR stands in for /output.
+// main.ts — Solmar City's hand-in program (Node 22, standard library only).
+// It copies game/ and screenshots/ from this repository into the output
+// directory and writes output/dossier.json with buildDossier, the kit's own
+// library, so the dossier the judge reads is exactly the one the scorer
+// rebuilds from the same files.
+//
+//   node main.ts                          writes to /output
+//   MAKEFUN_OUTPUT_DIR=out node main.ts   writes to ./out instead
+//
+// Running it twice over the same repository writes the same bytes twice.
 
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+/** The repository root: the directory this file lives in. */
+const ROOT = dirname(fileURLToPath(import.meta.url));
 
-// The scorer caps /output at 1000 entries, so the output is rebuilt from
-// scratch on every run: a stale file from an earlier build must never leak
-// into the hand-in, and running the program twice writes the same bytes.
-// Removing the old trees first is what makes the second run identical.
-rmSync(join(out, 'game'), { recursive: true, force: true });
-rmSync(join(out, 'screenshots'), { recursive: true, force: true });
-rmSync(join(out, 'dossier.json'), { force: true });
-mkdirSync(out, { recursive: true });
-cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) {
-  cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
-}
+/** The output directory: the platform's /output, or MAKEFUN_OUTPUT_DIR. */
+const OUT = process.env.MAKEFUN_OUTPUT_DIR || '/output';
 
-// The scorer's own caps (reference/gate.json): only text_max_bytes shapes
-// the bytes; the other caps refuse an entry the scorer would refuse — more
-// than 4 screenshots or one over 256 KiB; more than 993 files in game/ or
-// 48 MiB of game files in all; a path under game/ over 1000 bytes. game/
-// counts beside /output's own 1000-entry cap with screenshots/ and
-// dossier.json, so the game is kept at 993 entries at most.
-const dossier = buildDossier(out, {
+/** The gate's caps for this bounty, as the dossier library takes them. */
+const CAPS = {
   text_max_bytes: 163840,
   screenshots: { max: 4, max_bytes: 262144 },
   game_max_files: 993,
   game_max_bytes: 50331648,
-  game_path_max_bytes: 1000,
-});
-writeFileSync(join(out, 'dossier.json'), dossier);
+};
 
-console.log('Solmar City v9: handed in to ' + out);
-console.log('  dossier.json: ' + dossier.length + ' bytes');
+/** Copy one directory of the repository into the output, replacing it. */
+function copyDir(name: string): void {
+  const from = join(ROOT, name);
+  const to = join(OUT, name);
+  if (!existsSync(from)) throw new Error(`main.ts: ${name}/ is missing from the repository`);
+  rmSync(to, { recursive: true, force: true });
+  cpSync(from, to, { recursive: true });
+}
+
+mkdirSync(OUT, { recursive: true });
+copyDir('game');
+copyDir('screenshots');
+
+// The dossier is built from the output itself, so it always describes
+// exactly what was handed in — never the repository's working tree.
+const dossier = buildDossier(OUT, CAPS);
+writeFileSync(join(OUT, 'dossier.json'), dossier);
+console.log(`Solmar City v10 handed in: ${dossier.length} bytes of dossier in ${OUT}`);

@@ -1,239 +1,305 @@
-// Solmar City — boot, the main loop, input and save/load. This is the last
-// script loaded; it wires every system together and starts the game.
-(function () {
-  var SOL = window.SOL;
-  var THREE = window.THREE;
+// main.js — Solmar City's bootstrap, game loop and window.SOL debug API.
+// Everything is wired here: graphics, the city, the people, the cars, the
+// police, the missions, the activities, the HUD, the radio and the save.
 
-  window.__errors = [];
-  window.addEventListener('error', function (e) {
-    window.__errors.push(String(e.message) + ' @ ' + (e.filename || '') + ':' + (e.lineno || ''));
+import * as THREE from 'three';
+import { G, SOL, countDistrictsHeld, districtAt } from './state.js';
+import { gfx, initGraphics, setTimeOfDay, setWeather, updateGraphics } from './graphics.js';
+import { city, initCity, updateCity } from './city.js';
+import { createCar, createFlyHeli, spawnBoats, spawnTraffic, spawnYachts, updateTraffic } from './vehicles.js';
+import { createPlayer, spawnPeds, switchCharacter, updatePlayerMesh, updatePeds } from './people.js';
+import { cameraTarget, enterNearest, exitVehicle, initInput, input, interact, updatePlayer } from './player.js';
+import { currentWeapon, fire, reload, selectWeaponSlot } from './combat.js';
+import { addWanted, clearWanted, setWanted, updatePolice } from './police.js';
+import { acceptBriefing, hideBriefing, stageTarget, startMission, updateMissions } from './missions.js';
+import { closeShop, openShop, shopBuy, startCourier, startRace, startTaxi, storeCarAtGarage, updateActivities } from './activities.js';
+import { initCollectibles, initJumps } from './activities.js';
+import { currentTrack, cycleStation, initAudio, startRadio, stationName } from './audio.js';
+import { closePause, drawMap, hideWheel, initHud, openPause, showStats, showStory, showWheel, toggleMap, updateHud, updatePanels } from './hud.js';
+import { hasSave, loadGame, saveGame } from './save.js';
+import { shot } from './shots.js';
+
+const canvas = document.getElementById('game');
+let clock = null;
+
+/** Build the world and wire the UI. Runs once at page load. */
+export function init() {
+  initGraphics(canvas);
+  initCity();
+  createPlayer(-8, -8, 'Jason');
+  spawnTraffic(26);
+  spawnPeds(40);
+  spawnBoats();
+  spawnYachts();
+  createFlyHeli();
+  initCollectibles();
+  initJumps();
+  // A few parked cars for the player to steal near the start, all on roads.
+  createCar('sedan', 0, 20, 0, { parked: true, cruise: 12 });
+  createCar('taxi', 56, -20, Math.PI, { parked: true, cruise: 12 });
+  createCar('sports', 112, 40, 0, { parked: true, cruise: 14 });
+  initHud();
+  initInput(canvas);
+  setTimeOfDay(G.time);
+  setWeather('clear');
+  wireKeys();
+  wireClicks();
+  wireTitle();
+  window.addEventListener('error', (e) => G.errors.push(String(e.message || e.error)));
+  window.addEventListener('unhandledrejection', (e) => G.errors.push('rejection: ' + String(e.reason)));
+  clock = new THREE.Clock();
+  G.ready = true;
+  window.SOL = SOL;
+  // Debug handle for the harness: the scene, the camera and the input.
+  window.__DBG = { gfx, city, G, input };
+  requestAnimationFrame(loop);
+}
+
+/** Keyboard shortcuts that live outside the driving input. */
+function wireKeys() {
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyM') toggleMap();
+    if (e.code === 'Escape') {
+      if (G.mapOpen) toggleMap();
+      else if (G.shop.open) closeShop();
+      else if (G.paused) closePause();
+      else openPause();
+    }
+    if (e.code === 'KeyQ') showWheel();
+    if (e.code === 'KeyV') cycleStation();
+    if (e.code === 'KeyT') startTaxi();
+    if (e.code === 'KeyY') startCourier();
+    if (e.code === 'Enter') {
+      if (!G.started) startGame();
+      else if (G.briefing) acceptBriefing();
+    }
   });
+  window.addEventListener('keyup', (e) => {
+    if (e.code === 'KeyQ') hideWheel();
+  });
+}
 
-  var input = { forward: false, back: false, left: false, right: false, run: false, crouch: false };
-  SOL.input = input;
+/** A quick click (not a camera drag) fires the current weapon. */
+function wireClicks() {
+  let downAt = 0;
+  let downX = 0;
+  let downY = 0;
+  canvas.addEventListener('mousedown', (e) => {
+    downAt = performance.now();
+    downX = e.clientX;
+    downY = e.clientY;
+  });
+  canvas.addEventListener('mouseup', (e) => {
+    const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+    if (performance.now() - downAt < 250 && moved < 6 && G.started && !G.paused) {
+      initAudio();
+      fire();
+    }
+  });
+}
 
-  // The game state: cash, respect, wanted level and the rest. The clock is
-  // NOT here — it lives in SOL.time (graphics.js) and the weather in
-  // SOL.weather; this object holds only the player's progress.
-  SOL.state = {
-    cash: 800, respect: 0, wanted: 0, paused: false, missionsDone: 0,
-    weapon: 'pistol', reserve: { pistol: 48, smg: 0, shotgun: 0 },
-    shotsFired: 0, lastShot: -99, lastCrime: 0, wantedQuiet: 0,
+/** Title screen buttons: New Game and Continue. */
+function wireTitle() {
+  const ng = document.getElementById('btnNew');
+  if (ng) ng.onclick = () => startGame();
+  const ct = document.getElementById('btnContinue');
+  if (ct) {
+    ct.style.display = hasSave() ? 'block' : 'none';
+    ct.onclick = () => {
+      loadGame();
+      startGame();
+    };
+  }
+  const bs = document.getElementById('btnStats');
+  if (bs) bs.onclick = () => { showStats(); const sb = document.getElementById('storyBody'); if (sb) sb.innerHTML = ''; };
+  const bso = document.getElementById('btnStory');
+  if (bso) bso.onclick = () => { showStory(); const st = document.getElementById('statsBody'); if (st) st.innerHTML = ''; };
+  const br = document.getElementById('btnResume');
+  if (br) br.onclick = () => closePause();
+}
+
+/** Leave the title screen and start playing. */
+export function startGame() {
+  G.started = true;
+  G.paused = false;
+  startRadio();
+}
+
+/** The frame loop. */
+function loop() {
+  requestAnimationFrame(loop);
+  const rawDt = clock ? Math.min(clock.getDelta(), 0.1) : 0.016;
+  const dt = rawDt * G.timeScale;
+  const playing = G.started && !G.paused && !G.mapOpen && !G.shop.open && !G.briefing;
+  if (playing) {
+    // The in-game clock: one game hour per two real minutes.
+    G.time += dt / 120;
+    if (G.time >= 24) {
+      G.time -= 24;
+      G.day++;
+    }
+    setTimeOfDay(G.time);
+    updatePlayer(dt);
+    updatePlayerMesh(dt);
+    updatePeds(dt);
+    updatePolice(dt);
+    updateMissions(dt);
+    updateActivities();
+    // District tracking for the HUD and the map.
+    if (G.player) G.district = districtAt(G.player.pos.x, G.player.pos.z).name;
+  }
+  // Traffic always moves, even on the title screen, so the city feels alive.
+  updateTraffic(dt);
+  updateCity(dt, G.time);
+  updateGraphics(dt, gfx.camera ? gfx.camera.position : null);
+  updateCamera(dt);
+  updateHud();
+  updatePanels();
+  if (gfx.renderer && gfx.scene && gfx.camera) gfx.renderer.render(gfx.scene, gfx.camera);
+}
+
+/** Third-person camera: behind the player, orbiting with the mouse. */
+function updateCamera() {
+  const cam = gfx.camera;
+  if (!cam) return;
+  const t = cameraTarget();
+  const p = G.player;
+  const inVehicle = p && !p.onFoot && p.vehicle;
+  const dist = inVehicle ? 13 : 9.5;
+  const height = 2.2 + input.camPitch * 7;
+  const cx = t.x + Math.sin(input.camYaw) * dist;
+  const cz = t.z + Math.cos(input.camYaw) * dist;
+  cam.position.set(cx, t.y + height - 1.6, cz);
+  cam.lookAt(t.x, t.y, t.z);
+  // Aim direction on the ground, for shooting.
+  G.camDir = { x: -Math.sin(input.camYaw), z: -Math.cos(input.camYaw) };
+}
+
+// ---------------------------------------------------------------- SOL API
+
+/** A snapshot of the game for the test harness. */
+SOL.state = function state() {
+  const p = G.player;
+  const t = stageTarget();
+  return {
+    ready: G.ready,
+    started: G.started,
+    cash: G.cash,
+    respect: G.respect,
+    rank: G.rank,
+    rp: G.rp,
+    health: Math.round(G.health),
+    armour: Math.round(G.armour),
+    wanted: G.wanted,
+    time: +G.time.toFixed(2),
+    day: G.day,
+    weather: G.weather,
+    mission: G.mission,
+    missionStage: G.missionStage,
+    missionText: G.missionText,
+    missionSub: G.missionSub,
+    stageTarget: t,
+    character: G.character,
+    district: G.district,
+    ending: G.ending,
+    pos: p ? { x: +p.pos.x.toFixed(1), z: +p.pos.z.toFixed(1) } : null,
+    speed: p ? +Math.abs(p.speed || 0).toFixed(1) : 0,
+    onFoot: p ? p.onFoot : true,
+    vehicle: p && p.vehicle ? p.vehicle.kind : null,
+    vehicleCondition: p && p.vehicle ? Math.round(p.vehicle.condition || 100) : null,
+    garage: { owned: G.garage.owned, cars: G.garage.cars.slice() },
+    shopOpen: G.shop.open,
+    mapOpen: G.mapOpen,
+    briefing: !!G.briefing,
+    stats: { ...G.stats },
+    districtsHeld: countDistrictsHeld(),
+    collectibles: G.stats.collectibles,
+    jumps: G.stats.jumps,
+    racesWon: G.stats.racesWon,
+    collectiblesAt: G.collectibles.map((c) => ({ x: +c.x.toFixed(1), z: +c.z.toFixed(1), found: c.found })),
+    jumpsAt: G.jumps.map((j) => ({ x: +j.x.toFixed(1), z: +j.z.toFixed(1), done: j.done })),
+    race: G.race ? { active: G.race.active, cp: G.race.next, started: G.race.startTime } : null,
+    taxi: G.taxi ? { active: G.taxi.active, x: +G.taxi.x.toFixed(1), z: +G.taxi.z.toFixed(1), fare: G.taxi.fare } : null,
+    courier: G.courier ? { active: G.courier.active, x: +G.courier.x.toFixed(1), z: +G.courier.z.toFixed(1) } : null,
+    radio: stationName(),
+    radioTrack: currentTrack(),
+    heliUp: !!G.heli,
+    flyHeliAlt: G.flyHeli ? +G.flyHeli.altitude.toFixed(1) : 0,
+    weapons: G.weapons.map((w) => ({ slot: w.slot, name: w.name, ammo: w.ammo, reserve: w.reserve, owned: w.owned })),
+    weaponSlot: G.weaponSlot,
+    cars: G.cars.map((c) => ({ kind: c.kind, x: +c.mesh.position.x.toFixed(1), z: +c.mesh.position.z.toFixed(1) })),
+    errors: G.errors.slice(),
   };
+};
 
-  function init() {
-    SOL.initGraphics();
-    var canvas = SOL.renderer.domElement;
-    var scene = SOL.scene;
-    var camera = SOL.camera;
+SOL.start = function start() {
+  startGame();
+  return true;
+};
 
-    SOL.vehicles = []; SOL.traffic = []; SOL.helis = []; SOL.boats = [];
-
-    SOL.buildCity();
-    SOL.createPlayer();
-    SOL.spawnTraffic(14);
-    SOL.spawnPeds(26);
-    SOL.spawnBoats();
-    SOL.spawnYachts();
-    SOL.spawnPlayerHeli();
-    SOL.spawnMissionSportsCar();
-
-    loadGame();
-    // resume the saved mission if there is one, otherwise start the story
-    SOL.startMission(SOL.missionState.index >= 0 ? SOL.missionState.index : 0);
-
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    canvas.addEventListener('mousedown', function (e) {
-      if (SOL.state.paused || SOL.isShopOpen()) return;
-      SOL.ensureAudio(); SOL.startRadio();
-      SOL.shoot();
-    });
-    canvas.addEventListener('click', function () { SOL.ensureAudio(); SOL.startRadio(); });
-
-    var last = performance.now();
-    function frame(now) {
-      requestAnimationFrame(frame);
-      var dt = Math.min(0.05, (now - last) / 1000);
-      last = now;
-      if (SOL.state.paused) { SOL.renderer.render(scene, camera); return; }
-      tick(dt);
-    }
-    requestAnimationFrame(frame);
-    SOL.booted = true;
-    // the title screen holds the game until the player presses Enter
-    SOL.state.paused = true;
-    SOL.started = false;
-  }
-  SOL.init = init;
-
-  // Pressing Enter on the title screen starts the city. The harness calls
-  // this directly too, so the automated playtest never waits on a keypress.
-  function startGame() {
-    var s = document.getElementById('startScreen');
-    if (s) s.classList.add('hidden');
-    SOL.state.paused = false;
-    SOL.started = true;
-    SOL.ensureAudio(); SOL.startRadio();
-  }
-  SOL.startGame = startGame;
-
-  function tick(dt) {
-    var st = SOL.state;
-    // the clock: a full day is SOL.time.dayLength seconds of play
-    SOL.time.hour += dt * 24 / SOL.time.dayLength;
-    if (SOL.time.hour >= 24) SOL.time.hour -= 24;
-    SOL.setTimeOfDay(SOL.time.hour);
-    var focus = SOL.updatePlayer(dt, input);
-    SOL.updateGraphics(dt, focus);
-    SOL.updateVehicles(dt);
-    SOL.updatePeds(dt);
-    SOL.updateWanted(dt);
-    SOL.updateMissions(dt);
-    SOL.updateTaxi(dt);
-    SOL.updateCourier(dt);
-    SOL.updateHUD(dt);
-    SOL.renderer.render(SOL.scene, SOL.camera);
-  }
-
-  function onKeyDown(e) {
-    var k = e.key.toLowerCase();
-    if (k === 'enter' && !SOL.started) { startGame(); return; }
-    SOL.ensureAudio(); SOL.startRadio();
-    if (k === 'w' || k === 'arrowup') input.forward = true;
-    else if (k === 's' || k === 'arrowdown') input.back = true;
-    else if (k === 'a' || k === 'arrowleft') input.left = true;
-    else if (k === 'd' || k === 'arrowright') input.right = true;
-    else if (k === 'shift') input.run = true;
-    else if (k === 'control') input.crouch = true;
-    else if (k === 'e') SOL.tryInteract();
-    else if (k === 't') SOL.startTaxi();
-    else if (k === 'y') SOL.startCourier();
-    else if (k === 'r') SOL.reload();
-    else if (k === 'v') SOL.cycleStation();
-    else if (k === '0') SOL.toggleMute();
-    else if (k === 'c') { SOL.switchCharacter(); SOL.saveGame(); }
-    else if (k === 'p' || k === 'escape') {
-      if (!SOL.started) return;
-      if (SOL.isShopOpen()) SOL.closeShop();
-      else SOL.togglePause();
-    }
-    else if (k === 'k') { SOL.saveGame(); SOL.hudToast('Saved', 'Progress saved.'); }
-    else if (k === 'h') SOL.showHelp();
-    else if (k === 'm') {
-      if (!SOL.missionState.active) SOL.startMission(SOL.missionState.index + 1);
-      else SOL.hudToast('Mission', SOL.MISSIONS[SOL.missionState.index].name);
-    }
-    else if (k === '1') { SOL.state.weapon = 'pistol'; SOL.hudToast('Pistol', 'Sidearm ready.'); }
-    else if (k === '2') { if (SOL.weapons.smg.owned) { SOL.state.weapon = 'smg'; SOL.hudToast('SMG', 'Rapid fire ready.'); } }
-    else if (k === '3') { if (SOL.weapons.shotgun.owned) { SOL.state.weapon = 'shotgun'; SOL.hudToast('Shotgun', 'Close range, big damage.'); } }
-    else if (k === ' ') { e.preventDefault(); SOL.shoot(); }
-  }
-
-  function onKeyUp(e) {
-    var k = e.key.toLowerCase();
-    if (k === 'w' || k === 'arrowup') input.forward = false;
-    else if (k === 's' || k === 'arrowdown') input.back = false;
-    else if (k === 'a' || k === 'arrowleft') input.left = false;
-    else if (k === 'd' || k === 'arrowright') input.right = false;
-    else if (k === 'shift') input.run = false;
-    else if (k === 'control') input.crouch = false;
-  }
-
-  // ---- save / load ---------------------------------------------------------
-  var SAVE_KEY = 'solmar-save-v9';
-
-  function saveGame() {
-    try {
-      var st = SOL.state;
-      var p = SOL.player;
-      var data = {
-        cash: st.cash, respect: st.respect, missionsDone: st.missionsDone || 0,
-        missionIndex: SOL.missionState.index, hour: SOL.time.hour,
-        x: p.x, z: p.z, character: p.character,
-        weapons: {
-          smg: SOL.weapons.smg.owned, shotgun: SOL.weapons.shotgun.owned,
-          ammo: { pistol: SOL.weapons.pistol.ammo, smg: SOL.weapons.smg.ammo, shotgun: SOL.weapons.shotgun.ammo },
-          reserve: st.reserve,
-        },
-        garage: SOL.garage,
-      };
-      localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-    } catch (e) { /* a blocked save never stops the game */ }
-  }
-  SOL.saveGame = saveGame;
-
-  function loadGame() {
-    var raw = null;
-    try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { /* no save, fresh start */ }
-    if (!raw) return false;
-    try {
-      var d = JSON.parse(raw);
-      var st = SOL.state;
-      st.cash = d.cash; st.respect = d.respect; st.missionsDone = d.missionsDone || 0;
-      SOL.time.hour = d.hour || 18.2;
-      SOL.player.x = d.x; SOL.player.z = d.z;
-      SOL.player.group.position.set(d.x, 0, d.z);
-      // player.js's switchCharacter toggles from the current model, so
-      // only call it when the save disagrees with the fresh default
-      var savedChar = d.character || 'jason';
-      if (savedChar !== SOL.player.character) SOL.switchCharacter();
-      if (d.weapons) {
-        SOL.weapons.smg.owned = !!d.weapons.smg;
-        SOL.weapons.shotgun.owned = !!d.weapons.shotgun;
-        if (d.weapons.ammo) {
-          SOL.weapons.pistol.ammo = d.weapons.ammo.pistol;
-          SOL.weapons.smg.ammo = d.weapons.ammo.smg;
-          SOL.weapons.shotgun.ammo = d.weapons.ammo.shotgun;
-        }
-        if (d.weapons.reserve) st.reserve = d.weapons.reserve;
-      }
-      if (d.garage) SOL.garage = d.garage;
-      SOL.missionState.index = d.missionIndex || 0;
-      return true;
-    } catch (e) { return false; }
-  }
-  SOL.loadGame = loadGame;
-
-  // ---- debug API for the automated playtest --------------------------------
-  // Every helper below is a thin, honest wrapper over live game state: the
-  // playtest drives the real game, it never edits the score directly.
-  SOL.debug = {
-    state: function () { return SOL.debugState(); },
-    start: function () { SOL.startGame(); return true; },
-    teleport: function (x, z) {
-      var p = SOL.player;
-      if (p.mode !== 'foot') SOL.exitVehicle();
-      p.x = x; p.z = z;
-      p.group.position.set(x, 0, z);
-      return true;
-    },
-    setTime: function (h) { SOL.setTimeOfDay(h); return h; },
-    setWanted: function (n) { SOL.state.wanted = n; SOL.state.lastCrime = SOL.time.hour; return n; },
-    setCash: function (n) { SOL.state.cash = n; return n; },
-    giveWeapon: function (k) {
-      if (SOL.weapons[k]) { SOL.weapons[k].owned = true; SOL.weapons[k].ammo = SOL.weapons[k].mag; SOL.state.reserve[k] = 96; }
-      return SOL.weapons[k] ? SOL.weapons[k].owned : false;
-    },
-    startMission: function (i) { return SOL.startMission(i); },
-    setRain: function (b) { SOL.setWeather(b ? 'rain' : 'clear'); return SOL.weather === 'rain'; },
-    shootAt: function () { return SOL.shoot(); },
-    enterNearest: function () {
-      var f = SOL.nearestEnterable(8);
-      if (!f) return null;
-      SOL.enterVehicle(f);
-      return f.kind;
-    },
-    exit: function () { SOL.exitVehicle(); return SOL.player.mode; },
-    clearWanted: function () { SOL.state.wanted = 0; SOL.state.lastCrime = SOL.time.hour - 60; return 0; },
-    save: function () { SOL.saveGame(); return true; },
-    load: function () { return SOL.loadGame(); },
-  };
-
-  // boot once the DOM is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+SOL.teleport = function teleport(x, z) {
+  const p = G.player;
+  if (!p) return false;
+  if (p.vehicle) {
+    p.vehicle.mesh.position.set(x, p.vehicle.mesh.position.y, z);
+    p.pos.copy(p.vehicle.mesh.position);
   } else {
-    init();
+    p.pos.set(x, 0, z);
+    p.mesh.position.copy(p.pos);
   }
-})();
+  return true;
+};
+
+SOL.enterNearest = enterNearest;
+SOL.exit = exitVehicle;
+SOL.interact = interact;
+SOL.setWanted = setWanted;
+SOL.clearWanted = clearWanted;
+SOL.addWanted = addWanted;
+SOL.setTime = function setTime(h) {
+  setTimeOfDay(h);
+  return G.time;
+};
+SOL.setRain = function setRain(on) {
+  setWeather(on ? 'rain' : 'clear');
+  return G.weather;
+};
+SOL.setCash = function setCash(n) {
+  G.cash = n;
+  return G.cash;
+};
+SOL.save = saveGame;
+SOL.load = loadGame;
+SOL.startMission = startMission;
+SOL.acceptBriefing = acceptBriefing;
+SOL.hideBriefing = hideBriefing;
+SOL.isShopOpen = function isShopOpen() {
+  return G.shop.open;
+};
+SOL.shopBuy = shopBuy;
+SOL.closeShop = closeShop;
+SOL.switchCharacter = switchCharacter;
+SOL.stationName = stationName;
+SOL.cycleStation = cycleStation;
+SOL.setTimeScale = function setTimeScale(s) {
+  G.timeScale = s;
+  return G.timeScale;
+};
+SOL.shot = shot;
+SOL.reload = reload;
+SOL.openMap = function openMap() {
+  if (!G.mapOpen) toggleMap();
+  return G.mapOpen;
+};
+SOL.closeMap = function closeMap() {
+  if (G.mapOpen) toggleMap();
+  return G.mapOpen;
+};
+SOL.startRace = startRace;
+SOL.storeCar = storeCarAtGarage;
+SOL.openShop = openShop;
+SOL.setCamYaw = function setCamYaw(yaw) {
+  input.camYaw = yaw;
+  return input.camYaw;
+};
+SOL.tryInteract = interact;

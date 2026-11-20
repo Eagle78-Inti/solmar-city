@@ -1,228 +1,342 @@
-// Solmar City — missions: a seven-job story, from Marta's first wheels to
-// the bank heist. Each mission is steps; the runner tracks the current step,
-// shows the beacon and the objective, and pays out on the last one.
-(function () {
-  var SOL = window.SOL;
-  var THREE = window.THREE;
+// missions.js — "The Solmar Reign": three acts, eight missions, two endings.
+// Named characters talk: Marta Voss runs the garage, her brother Dario owes
+// Rook fifty grand, and the player works the debt off — or takes the crown.
 
-  var MISSIONS = [
-    {
-      name: 'First Wheels', brief: 'Marta needs wheels. Steal a car and bring it to her drop-off.',
-      payout: 1350, respect: 10,
-      steps: [
-        { type: 'goto', x: -8, z: -8, r: 6, text: 'Go see Marta at the corner' },
-        { type: 'enter', kind: 'car', text: 'Steal a car (press E beside one)' },
-        { type: 'driveTo', x: 56, z: 84, r: 8, text: 'Drive the car to the drop-off in Neon Mile' },
-      ],
+import * as THREE from 'three';
+import { G, addCash, addRespect, addRp, moveStanding, toast } from './state.js';
+import { gfx } from './graphics.js';
+import { groundDist } from './util.js';
+import { createCar } from './vehicles.js';
+import { addWanted, clearWanted } from './police.js';
+import { saveGame } from './save.js';
+
+/**
+ * The story. Payouts are the cash the mission pays; totals run
+ * $800 → $2,150 → $3,950 → $6,150 → $9,150 → $12,150 → $15,500 → $25,000 → $50,000.
+ */
+export const MISSIONS = [
+  {
+    n: 1, title: 'First Wheels', act: 1, district: 'Downtown', payout: 1350, respect: 10,
+    brief: [
+      { who: 'Marta', text: "Jason. My brother Dario owes Rook fifty grand, and Rook's boys just took Dario's car as a down payment." },
+      { who: 'Marta', text: "It's parked up on Bintu Street. Take it back. Quietly if you can. Loudly if you must." },
+      { who: 'Jason', text: 'And if Rook’s boys are watching it?' },
+      { who: 'Marta', text: 'Then they learn my name. Bring the car to my garage on the west side.' },
+    ],
+    stages: [
+      { text: 'Go see Marta at the corner', kind: 'goto', x: -8, z: -8 },
+      { text: "Take Dario's car back", kind: 'enter', x: 56, z: 84, car: 'sedan' },
+      { text: "Bring it to Marta's garage", kind: 'drive', x: -56, z: 130 },
+    ],
+    lines: {
+      1: [{ who: 'Dario', text: "That's my car! Tell Marta I said thanks — and tell Rook I'm good for it." }],
+      2: [{ who: 'Marta', text: 'Good. One car back, forty-nine thousand to go.' }],
     },
-    {
-      name: 'Neon Nights', brief: 'Lucia is waiting in Neon Mile. Pick her up and take her to the casino.',
-      payout: 1800, respect: 15,
-      steps: [
-        { type: 'goto', x: 84, z: -28, r: 6, text: 'Go to Neon Mile and find Lucia' },
-        { type: 'enter', kind: 'car', text: 'Get in a car — Lucia is coming with you' },
-        { type: 'driveTo', x: 112, z: 28, r: 8, text: 'Drive Lucia to the casino' },
-      ],
+  },
+  {
+    n: 2, title: 'Neon Nights', act: 1, district: 'Neon Mile', payout: 1800, respect: 15,
+    brief: [
+      { who: 'Lucia', text: "Rook's tail has been on me all night. Drive me through Neon Mile and lose him." },
+      { who: 'Marta', text: "Don't stop for anything. Neon Mile's cameras belong to Rook too." },
+    ],
+    stages: [
+      { text: 'Pick up Lucia', kind: 'goto', x: 56, z: -28 },
+      { text: 'Drive through Neon Mile', kind: 'drive', x: 112, z: 28 },
+      { text: 'Lose the tail', kind: 'survive', seconds: 6, wanted: 1 },
+    ],
+    lines: {
+      1: [{ who: 'Lucia', text: 'There he is. Black sedan, two cars back. Drive like you mean it.' }],
+      2: [{ who: 'Lucia', text: 'Gone. You drive almost as well as you talk, Jason.' }],
     },
-    {
-      name: 'Harbor Run', brief: 'A package needs to cross the bay. Take a boat out to the far buoy and back.',
-      payout: 2200, respect: 15,
-      steps: [
-        { type: 'goto', x: -168, z: -40, r: 8, text: 'Get to the marina' },
-        { type: 'enter', kind: 'boat', text: 'Take a boat (press E beside one)' },
-        { type: 'driveTo', x: -300, z: 60, r: 12, text: 'Sail out to the far buoy' },
-        { type: 'driveTo', x: -196, z: -40, r: 10, text: 'Bring the package back to the pier' },
-      ],
+  },
+  {
+    n: 3, title: 'Harbor Run', act: 1, district: 'Portside', payout: 2200, respect: 15,
+    brief: [
+      { who: 'Marta', text: "Crates in the Portside warehouse. Rook's men count them at midnight — be gone by then." },
+      { who: 'Dario', text: "They're heavy. And they tick. Don't ask." },
+      { who: 'Jason', text: "I wasn't going to." },
+    ],
+    stages: [
+      { text: 'Reach the Portside warehouse', kind: 'goto', x: -168, z: 180 },
+      { text: 'Take the truck', kind: 'enter', x: -168, z: 180, car: 'truck' },
+      { text: 'Deliver the crates to the marina', kind: 'drive', x: -56, z: 120 },
+    ],
+    lines: {
+      1: [{ who: 'Dario', text: 'Careful with the crates. Rook checks the seals.' }],
+      2: [{ who: 'Marta', text: 'Delivered. The marina owes us one now.' }],
     },
-    {
-      name: 'The Getaway', brief: 'A sports car is waiting downtown. Take it — then lose the heat and park it at the garage.',
-      payout: 3000, respect: 20,
-      steps: [
-        { type: 'goto', x: 28, z: 28, r: 8, text: 'Find the sports car downtown' },
-        { type: 'enter', kind: 'sports', text: 'Steal the sports car' },
-        { type: 'survive', stars: 1, text: 'Lose the heat — get your wanted level down to 1 star' },
-        { type: 'driveTo', x: -84, z: 130, r: 9, text: 'Park the car at Sunset Garage' },
-      ],
+  },
+  {
+    n: 4, title: 'The Getaway', act: 1, district: 'Downtown', payout: 3000, respect: 20,
+    brief: [
+      { who: 'Lucia', text: "The sports car on 56 North. Rook's prize. Take it, and take it fast." },
+      { who: 'Marta', text: "Two stars the moment you touch it. Don't stop till the garage." },
+    ],
+    stages: [
+      { text: "Take Rook's sports car", kind: 'enter', x: 56, z: 28, car: 'sports', wanted: 2 },
+      { text: 'Outrun the law to the garage', kind: 'drive', x: -56, z: 130 },
+    ],
+    lines: {
+      0: [{ who: 'Lucia', text: 'That engine. Rook polishes it more than his shoes.' }],
+      1: [{ who: 'Marta', text: 'Beautiful. Rook is going to be furious. I love it.' }],
     },
-    {
-      name: 'Set Up', brief: 'It was a trap. The warehouse job was an ambush — survive the night and slip away.',
-      payout: 3000, respect: 20,
-      steps: [
-        { type: 'goto', x: -56, z: -112, r: 8, text: 'Go to the warehouse at nightfall' },
-        { type: 'ambush', text: 'It is a setup — run! The police are coming' },
-        { type: 'survive', stars: 1, text: 'Lose the heat — get your wanted level down to 1 star' },
-      ],
+  },
+  {
+    n: 5, title: 'Set Up', act: 2, district: 'Old Town', payout: 3000, respect: 10,
+    brief: [
+      { who: 'Kade', text: "Rook paid me to bring you in, Jason. Four stars, no backup. Just you and me and the night." },
+      { who: 'Marta', text: "It's a trap. Walk in anyway — and walk out." },
+      { who: 'Jason', text: 'Tell Rook the trap needs a bigger cage.' },
+    ],
+    stages: [
+      { text: 'Walk into the ambush', kind: 'goto', x: -56, z: -112 },
+      { text: 'Survive the ambush', kind: 'survive', seconds: 18, wanted: 4 },
+      { text: 'Lose them — reach the garage', kind: 'drive', x: -56, z: 130 },
+    ],
+    lines: {
+      1: [{ who: 'Kade', text: 'Nobody walks out of Old Town tonight!' }],
+      2: [{ who: 'Marta', text: 'You walked out. Rook just lost a lot of men and a lot of face.' }],
     },
-    {
-      name: 'Harbor Lights', brief: 'The buyer wants the white yacht. Steal it from the marina and sail it to the far pier — under 4 stars.',
-      payout: 3350, respect: 20,
-      steps: [
-        { type: 'goto', x: -196, z: -40, r: 8, text: 'Get to the marina' },
-        { type: 'enter', kind: 'yacht', text: 'Steal the white yacht' },
-        { type: 'driveTo', x: -300, z: -120, r: 14, text: 'Sail the yacht to the far pier' },
-      ],
+  },
+  {
+    n: 6, title: 'Harbor Lights', act: 2, district: 'Marina Bay', payout: 3350, respect: 10,
+    brief: [
+      { who: 'Marta', text: "Rook's white yacht. It sails tonight with his money on it. Take the yacht, sail it to the buyer at the south pier." },
+      { who: 'Lucia', text: 'A yacht. You finally get a boat, Jason. Try not to sink it.' },
+    ],
+    stages: [
+      { text: 'Reach the yacht at the north pier', kind: 'goto', x: -292, z: -20 },
+      { text: 'Board the yacht', kind: 'boat', x: -292, z: -20 },
+      { text: 'Sail it to the buyer at the south pier', kind: 'boat', x: -300, z: -120 },
+    ],
+    lines: {
+      1: [{ who: 'Lucia', text: 'Cast off. Rook’s money is in the cabin — don’t open it.' }],
+      2: [{ who: 'Marta', text: 'The buyer paid. Rook’s yacht is ours now.' }],
     },
-    {
-      name: 'The Big One', brief: 'Solmar Bank. One vault, one getaway, one legend. Rob it and bring the cash home.',
-      payout: 4500, respect: 0,
-      steps: [
-        { type: 'goto', x: 28, z: -28, r: 8, text: 'Get to Solmar Bank' },
-        { type: 'rob', seconds: 10, text: 'Crack the vault — stay inside the bank' },
-        { type: 'driveTo', x: -84, z: 130, r: 9, text: 'Escape to Sunset Garage with the cash' },
-      ],
+  },
+  {
+    n: 7, title: 'The Big One', act: 3, district: 'Downtown', payout: 9500, respect: 10,
+    brief: [
+      { who: 'Lucia', text: 'Solmar Bank. The vault. Ten seconds on the drill and we are rich — or we are dead.' },
+      { who: 'Marta', text: "Rook keeps his ledger in that vault. Take the money and the ledger." },
+    ],
+    stages: [
+      { text: 'Reach Solmar Bank', kind: 'goto', x: 0, z: -28 },
+      { text: 'Crack the vault — stay close', kind: 'hold', x: 0, z: -28, seconds: 10, wanted: 3 },
+      { text: 'Escape to the garage', kind: 'drive', x: -56, z: 130 },
+    ],
+    lines: {
+      1: [{ who: 'Lucia', text: 'Drill’s in. Ten seconds. Don’t move.' }],
+      2: [{ who: 'Marta', text: 'The ledger is ours. Rook doesn’t own this city anymore — we do.' }],
     },
-  ];
-  SOL.MISSIONS = MISSIONS;
+  },
+  {
+    n: 8, title: 'The Choice', act: 3, district: 'Kumala Beach', payout: 25000, respect: 10,
+    brief: [
+      { who: 'Rook', text: 'Fifty grand, Jason. Take the crown — keep the money, take my city. Or stay loyal — pay Dario’s debt and walk away a nobody.' },
+      { who: 'Marta', text: 'Your call. Either way, this ends tonight.' },
+      { who: 'Dario', text: "Don't do it for me, Jason. Do it for the city." },
+    ],
+    stages: [
+      { text: 'Choose: Take the Crown, or Stay Loyal', kind: 'choice', crown: { x: 0, z: -28 }, loyal: { x: -292, z: 90 } },
+    ],
+    lines: {},
+  },
+];
 
-  var beacon = null, beaconRing = null, beaconLight = null;
-  function makeBeacon() {
-    beacon = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 34, 16, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0xffd75e, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }));
-    beaconRing = new THREE.Mesh(new THREE.RingGeometry(3, 4.4, 24),
-      new THREE.MeshBasicMaterial({ color: 0xffd75e, transparent: true, opacity: 0.8, side: THREE.DoubleSide }));
-    beaconRing.rotation.x = -Math.PI / 2;
-    beaconLight = SOL.glowSprite(0xffd75e, 12, 0.5);
-    SOL.scene.add(beacon); SOL.scene.add(beaconRing); SOL.scene.add(beaconLight);
-    hideBeacon();
-  }
-  function showBeacon(x, z) {
-    if (!beacon) makeBeacon();
-    beacon.visible = true; beaconRing.visible = true; beaconLight.visible = true;
-    beacon.position.set(x, 17, z);
-    beaconRing.position.set(x, 0.15, z);
-    beaconLight.position.set(x, 4, z);
-    SOL.missionTarget = { x: x, z: z };
-  }
-  function hideBeacon() {
-    if (beacon) { beacon.visible = false; beaconRing.visible = false; beaconLight.visible = false; }
-    SOL.missionTarget = null;
-  }
-  SOL.showBeacon = showBeacon; SOL.hideBeacon = hideBeacon;
+/** The mission list for the pause menu: title, act, payout, done. */
+export function storyList() {
+  return MISSIONS.map((m) => ({
+    n: m.n,
+    title: m.title,
+    act: m.act,
+    payout: m.payout,
+    done: G.missionDone[m.n] || false,
+    district: m.district,
+  }));
+}
 
-  var mState = { index: -1, step: 0, active: false, robT: 0, ambushSet: false, nextDelay: 0 };
-  SOL.missionState = mState;
+/** Total cash the campaign pays if every mission is finished. */
+export function campaignTotal() {
+  return 800 + MISSIONS.reduce((n, m) => n + m.payout, 0);
+}
 
-  function startMission(i) {
-    if (i >= MISSIONS.length) { mState.active = false; hideBeacon(); return false; }
-    var m = MISSIONS[i];
-    mState.index = i; mState.step = 0; mState.active = true;
-    mState.robT = 0; mState.ambushSet = false;
-    SOL.hudToast('MISSION — ' + m.name, m.brief);
-    SOL.setObjective(m.name, m.steps[0].text);
-    updateStepTarget();
-    return true;
+/** A mission marker: a light beam and a ground ring at a target. */
+function makeMarker(x, z, color) {
+  const group = new THREE.Group();
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.3, 1.3, 42, 12, 1, true),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  beam.position.y = 21;
+  group.add(beam);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(2.6, 3.6, 24),
+    new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.9, depthWrite: false }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.12;
+  group.add(ring);
+  group.position.set(x, 0, z);
+  gfx.scene.add(group);
+  G.markers.push(group);
+  return group;
+}
+
+function clearMarkers() {
+  for (const m of G.markers) {
+    if (m.parent) m.parent.remove(m);
   }
-  SOL.startMission = startMission;
+  G.markers = [];
+}
 
-  function updateStepTarget() {
-    var m = MISSIONS[mState.index];
-    var s = m.steps[mState.step];
-    if (!s) return;
-    if (s.type === 'goto' || s.type === 'driveTo') showBeacon(s.x, s.z);
-    else if (s.type === 'rob') showBeacon(28, -28);
-    else hideBeacon();
-    SOL.setObjective(m.name, s.text);
+/** The current stage's target, for the HUD, the map and the test harness. */
+export function stageTarget() {
+  const m = MISSIONS[G.mission - 1];
+  if (!m || G.missionStage >= m.stages.length) return null;
+  const s = m.stages[G.missionStage];
+  if (s.kind === 'choice') return { kind: 'choice', crown: s.crown, loyal: s.loyal };
+  return { kind: s.kind, x: s.x, z: s.z, text: s.text };
+}
+
+/** Start a mission: show its briefing with the dialogue. */
+export function startMission(n) {
+  const m = MISSIONS[n - 1];
+  if (!m) return false;
+  if (G.missionDone[n]) return false;
+  G.mission = n;
+  G.missionStage = 0;
+  G.act = m.act;
+  G.briefing = { mission: n, title: m.title, act: m.act, brief: m.brief, stages: m.stages.map((s) => s.text) };
+  G.missionText = m.title;
+  G.missionSub = 'Read the briefing — press Enter to begin';
+  clearMarkers();
+  // Spawn the mission's car, if it has one.
+  if (n === 1) createCar('sedan', 56, 84, Math.PI / 2, { mission: true, missionN: 1, cruise: 12 });
+  if (n === 3) createCar('truck', -168, 180, 0, { mission: true, missionN: 3, cruise: 11 });
+  if (n === 4) createCar('sports', 56, 28, Math.PI, { mission: true, missionN: 4, cruise: 14 });
+  return true;
+}
+
+/** Accept the briefing and begin the first stage. */
+export function acceptBriefing() {
+  if (!G.briefing) return false;
+  G.briefing = null;
+  beginStage();
+  return true;
+}
+
+export function hideBriefing() {
+  G.briefing = null;
+  G.mission = 0;
+  G.missionStage = 0;
+  G.missionText = '';
+  clearMarkers();
+}
+
+/** Set up the current stage: its marker, its wanted level, its line. */
+export function beginStage() {
+  const m = MISSIONS[G.mission - 1];
+  if (!m) return;
+  const s = m.stages[G.missionStage];
+  if (!s) return;
+  clearMarkers();
+  G.missionText = m.title;
+  G.missionSub = s.text;
+  if (s.kind === 'choice') {
+    makeMarker(s.crown.x, s.crown.z, 0xffd23e);
+    makeMarker(s.loyal.x, s.loyal.z, 0x3ec6ff);
+    sayLine({ who: 'Rook', text: 'Gold is the crown. Blue is the debt. Choose.' });
+    return;
   }
+  makeMarker(s.x, s.z, 0xffd23e);
+  if (s.wanted) addWanted(s.wanted);
+  if (s.kind === 'survive' || s.kind === 'hold') s.left = s.seconds;
+  const lines = m.lines[G.missionStage];
+  if (lines) for (const line of lines) sayLine(line);
+}
 
-  function completeStep() {
-    var m = MISSIONS[mState.index];
-    mState.step++;
-    mState.robT = 0; mState.ambushSet = false;
-    if (mState.step >= m.steps.length) completeMission();
-    else updateStepTarget();
-  }
-  SOL.completeStep = completeStep;
+/** Show a line of dialogue as a subtitle. */
+function sayLine(line) {
+  G.subtitle = line.who + ': ' + line.text;
+  G.subtitleUntil = performance.now() / 1000 + 5;
+  toast(line.who + ': ' + line.text, 5);
+}
 
-  function completeMission() {
-    var m = MISSIONS[mState.index];
-    var st = SOL.state;
-    st.cash += m.payout;
-    st.respect = Math.min(100, st.respect + m.respect);
-    st.missionsDone = (st.missionsDone || 0) + 1;
-    SOL.hudToast('MISSION PASSED — ' + m.name, '+$' + m.payout + '  ·  respect +' + m.respect);
-    SOL.saveGame();
-    hideBeacon();
-    mState.active = false;
-    mState.nextDelay = 2.5;
-  }
-
-  function updateMissions(dt) {
-    if (!mState.active) {
-      if (mState.nextDelay > 0) {
-        mState.nextDelay -= dt;
-        if (mState.nextDelay <= 0) startMission(mState.index + 1);
-      }
+/** Per-frame mission logic: advance stages, pay out, end the campaign. */
+export function updateMissions(dt) {
+  if (!G.mission || G.briefing) return;
+  const m = MISSIONS[G.mission - 1];
+  if (!m) return;
+  const s = m.stages[G.missionStage];
+  if (!s) return;
+  const p = G.player;
+  if (!p) return;
+  const px = p.pos.x;
+  const pz = p.pos.z;
+  let done = false;
+  if (s.kind === 'goto') {
+    done = groundDist(px, pz, s.x, s.z) < 6;
+  } else if (s.kind === 'enter') {
+    done = !p.onFoot && p.vehicle && p.vehicle.isMission;
+  } else if (s.kind === 'drive') {
+    done = !p.onFoot && groundDist(px, pz, s.x, s.z) < 8;
+  } else if (s.kind === 'boat') {
+    done = !p.onFoot && (p.vehicle.kind === 'boat' || p.vehicle.kind === 'yacht') && groundDist(px, pz, s.x, s.z) < 9;
+  } else if (s.kind === 'survive') {
+    s.left -= dt;
+    G.missionSub = s.text + ' — ' + Math.max(0, Math.ceil(s.left)) + 's';
+    done = s.left <= 0;
+  } else if (s.kind === 'hold') {
+    if (groundDist(px, pz, s.x, s.z) < 7) {
+      s.left -= dt;
+      G.missionSub = s.text + ' — ' + Math.max(0, Math.ceil(s.left)) + 's';
+      done = s.left <= 0;
+    } else {
+      G.missionSub = s.text + ' — stay close to the vault';
+    }
+  } else if (s.kind === 'choice') {
+    if (groundDist(px, pz, s.crown.x, s.crown.z) < 7) {
+      completeMission(m, 'Take the Crown');
       return;
     }
-    var m = MISSIONS[mState.index];
-    var s = m.steps[mState.step];
-    var p = SOL.player;
-    if (!s) return;
-    if (s.type === 'goto' || s.type === 'driveTo') {
-      var d = Math.hypot(p.x - s.x, p.z - s.z);
-      if (d < s.r) completeStep();
-    } else if (s.type === 'ambush') {
-      if (!mState.ambushSet) {
-        mState.ambushSet = true;
-        SOL.setTimeOfDay(22.5);
-        SOL.addWanted(4, 'ambushed');
-        SOL.hudToast('IT\'S A SETUP — RUN!', 'Four stars. Lose the heat.');
-      }
-      completeStep();
-    } else if (s.type === 'survive') {
-      if (SOL.state.wanted <= s.stars) completeStep();
-    } else if (s.type === 'rob') {
-      var d2 = Math.hypot(p.x - 28, p.z - (-28));
-      if (d2 < 10) {
-        mState.robT += dt;
-        SOL.setObjective(m.name, 'Cracking the vault… ' + Math.ceil(s.seconds - mState.robT) + 's — stay inside!');
-        if (SOL.state.wanted < 4) SOL.addWanted(1, 'robbing the bank');
-        if (mState.robT >= s.seconds) completeStep();
-      } else {
-        mState.robT = 0;
-        SOL.setObjective(m.name, s.text);
-      }
-    }
-    // beacon pulse
-    if (beacon && beacon.visible) {
-      beacon.rotation.y += dt * 1.2;
-      beaconRing.scale.setScalar(1 + Math.sin(SOL.time.hour * 4) * 0.12);
+    if (groundDist(px, pz, s.loyal.x, s.loyal.z) < 7) {
+      completeMission(m, 'Stay Loyal');
+      return;
     }
   }
-  SOL.updateMissions = updateMissions;
-
-  // The player entering a vehicle can complete an enter step.
-  SOL.onEnter = function (kind) {
-    if (!mState.active) return;
-    var m = MISSIONS[mState.index];
-    var s = m.steps[mState.step];
-    if (!s || s.type !== 'enter') return;
-    if (s.kind === 'car' && (kind === 'car' || kind === 'sports')) completeStep();
-    else if (s.kind === 'sports' && kind === 'sports') completeStep();
-    else if (s.kind === kind) completeStep();
-  };
-
-  // The getaway sports car waits downtown for mission 4 — parked, red, and
-  // tagged so entering it counts as stealing the sports car, not any car.
-  function spawnMissionSportsCar() {
-    var car = SOL.createCar('sports', 0xc23b2e);
-    SOL.placeCar(car, 28, 28, Math.PI / 2);
-    car.isMissionSports = true;
-    SOL.scene.add(car.group);
-    SOL.vehicles.push(car);
-    SOL.missionSportsCar = car;
-    return car;
+  if (done) {
+    G.missionStage++;
+    if (G.missionStage >= m.stages.length) {
+      completeMission(m, null);
+    } else {
+      beginStage();
+    }
   }
-  SOL.spawnMissionSportsCar = spawnMissionSportsCar;
+}
 
-  // Debug / playtest helpers.
-  SOL.missionInfo = function () {
-    if (mState.index < 0) return { active: false, index: -1 };
-    var m = MISSIONS[mState.index];
-    return {
-      active: mState.active, index: mState.index, name: m.name,
-      step: mState.step, stepText: m.steps[mState.step] ? m.steps[mState.step].text : 'done',
-      missionsDone: SOL.state.missionsDone || 0,
-    };
-  };
-})();
+/** Pay out a mission, raise standing and respect, save the game. */
+export function completeMission(m, ending) {
+  addCash(m.payout);
+  addRespect(m.respect);
+  addRp(100);
+  moveStanding(m.district, 35);
+  G.missionDone[m.n] = true;
+  clearMarkers();
+  if (ending) {
+    G.ending = ending;
+    if (ending === 'Take the Crown') {
+      toast('ENDING — Take the Crown: the $50,000 is yours. Solmar City has a new king.', 8);
+    } else {
+      toast('ENDING — Stay Loyal: the debt is paid. Dario is free. The garage stands.', 8);
+    }
+  } else {
+    toast('Mission complete: ' + m.title + ' — +$' + m.payout.toLocaleString('en-US'), 5);
+  }
+  G.mission = 0;
+  G.missionStage = 0;
+  G.missionText = '';
+  G.missionSub = '';
+  clearWanted();
+  saveGame();
+}
