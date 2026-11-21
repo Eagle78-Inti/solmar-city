@@ -1,305 +1,111 @@
-// player.js — the player on foot, behind the wheel, at the helm and in the
-// air: movement, driving, entering and stealing vehicles, interactions.
+// player.js — on-foot movement, driving, entering/exiting vehicles,
+// and the Jason/Lucia character switch.
+import { clamp, clampWorld, dist2d } from './util.js';
+import { syncCar } from './vehicles.js';
 
-import * as THREE from 'three';
-import { G, addRp, toast } from './state.js';
-import { insideBuilding } from './city.js';
-import { clamp, groundDist, wrapAngle } from './util.js';
-import { nearestBoat, nearestVehicle, updateFlyHeli } from './vehicles.js';
-import { addWanted } from './police.js';
-import { openShop, storeCarAtGarage, tryQuickSave, tryRespray } from './activities.js';
-import { hornSound } from './audio.js';
-
-export const input = {
-  forward: false,
-  back: false,
-  left: false,
-  right: false,
-  up: false,
-  down: false,
-  run: false,
-  camYaw: 0,
-  camPitch: 0.32,
-};
-
-/** Attach keyboard + mouse listeners; main.js reads `input` each frame. */
-export function initInput(canvas) {
-  const keys = {};
-  window.addEventListener('keydown', (e) => {
-    keys[e.code] = true;
-    syncKeys(keys);
-    if (e.code === 'KeyE') interact();
-    if (e.code === 'KeyF') {
-      if (G.player && !G.player.onFoot) exitVehicle();
-      else enterNearest();
-    }
-    if (e.code === 'KeyH') horn();
-    if (e.code === 'Digit1') selectWeapon(1);
-    if (e.code === 'Digit2') selectWeapon(2);
-    if (e.code === 'Digit3') selectWeapon(3);
-    if (e.code === 'Digit4') selectWeapon(4);
-    if (e.code === 'Digit5') selectWeapon(5);
-    if (e.code === 'KeyR') window.SOL && window.SOL.reload && window.SOL.reload();
-  });
-  window.addEventListener('keyup', (e) => {
-    keys[e.code] = false;
-    syncKeys(keys);
-  });
-  let dragging = false;
-  let lastX = 0;
-  let lastY = 0;
-  canvas.addEventListener('mousedown', (e) => {
-    dragging = true;
-    lastX = e.clientX;
-    lastY = e.clientY;
-  });
-  window.addEventListener('mouseup', () => {
-    dragging = false;
-  });
-  window.addEventListener('mousemove', (e) => {
-    if (!dragging) return;
-    input.camYaw -= (e.clientX - lastX) * 0.005;
-    input.camPitch = clamp(input.camPitch + (e.clientY - lastY) * 0.003, 0.05, 1.1);
-    lastX = e.clientX;
-    lastY = e.clientY;
-  });
-}
-
-function syncKeys(keys) {
-  input.forward = !!(keys.KeyW || keys.ArrowUp);
-  input.back = !!(keys.KeyS || keys.ArrowDown);
-  input.left = !!(keys.KeyA || keys.ArrowLeft);
-  input.right = !!(keys.KeyD || keys.ArrowRight);
-  input.up = !!keys.Space;
-  input.down = !!keys.KeyC;
-  input.run = !!keys.ShiftLeft || !!keys.ShiftRight;
-}
-
-function selectWeapon(slot) {
-  const w = G.weapons[slot - 1];
-  if (w && w.owned) G.weaponSlot = slot;
-}
-
-/** The horn: a short beep that turns nearby heads. */
-export function horn() {
-  hornSound();
-  for (const ped of G.peds) {
-    if (groundDist(G.player.pos.x, G.player.pos.z, ped.mesh.position.x, ped.mesh.position.z) < 10) {
-      ped.yaw = Math.atan2(G.player.pos.x - ped.mesh.position.x, G.player.pos.z - ped.mesh.position.z);
-    }
-  }
-}
-
-/** Enter the nearest vehicle, boat or helicopter. */
-export function enterNearest() {
-  const p = G.player;
-  if (!p || !p.onFoot) return false;
-  // Flyable helicopter first (it sits on the helipad).
-  if (G.flyHeli && groundDist(p.pos.x, p.pos.z, G.flyHeli.mesh.position.x, G.flyHeli.mesh.position.z) < 6) {
-    p.vehicle = G.flyHeli;
-    G.flyHeli.isPlayer = true;
-    p.onFoot = false;
-    p.mesh.visible = false;
-    toast('Helicopter — Space climbs, C descends, W/S pitch', 4);
-    return true;
-  }
-  const boat = nearestBoat(p.pos.x, p.pos.z, 6);
-  if (boat) {
-    p.vehicle = boat;
-    boat.isPlayer = true;
-    p.onFoot = false;
-    p.mesh.visible = false;
-    toast('Boat — W throttle, A/D steer', 3);
-    return true;
-  }
-  // A mission car is the objective: prefer this mission's car over the car
-  // the player just left parked beside it (an older mission car may be
-  // sitting in the same spot).
-  const missionCar =
-    G.cars.find(
-      (c) => c.isMission && c.missionN === G.mission && !c.isPlayer && c.kind !== 'boat' && c.kind !== 'yacht' && groundDist(p.pos.x, p.pos.z, c.mesh.position.x, c.mesh.position.z) < 6,
-    ) ||
-    G.cars.find(
-      (c) => c.isMission && !c.isPlayer && c.kind !== 'boat' && c.kind !== 'yacht' && groundDist(p.pos.x, p.pos.z, c.mesh.position.x, c.mesh.position.z) < 6,
-    );
-  const car = missionCar || nearestVehicle(p.pos.x, p.pos.z, 4.5);
-  if (car) {
-    p.vehicle = car;
-    car.isPlayer = true;
-    p.onFoot = false;
-    p.mesh.visible = false;
-    if (!car.parked && !car.isMission) {
-      G.stats.carsStolen++;
-      addWanted(1);
-      toast('Car stolen — the law is coming', 3);
-    }
-    return true;
-  }
-  return false;
-}
-
-/** Step out of the current vehicle. */
-export function exitVehicle() {
-  const p = G.player;
-  if (!p || p.onFoot || !p.vehicle) return;
-  const v = p.vehicle;
-  v.isPlayer = false;
-  if (v.kind === 'heli' && v.altitude > 1) return; // must land first
-  const side = { x: v.mesh.position.x + Math.cos(v.yaw) * 3, z: v.mesh.position.z - Math.sin(v.yaw) * 3 };
-  p.pos.set(side.x, 0, side.z);
-  p.mesh.position.copy(p.pos);
-  p.mesh.visible = true;
-  p.onFoot = true;
-  p.vehicle = null;
-  p.yaw = v.yaw;
-}
-
-/** E key: shop, garage, safehouse save, respray, or enter a vehicle. */
-export function interact() {
-  const p = G.player;
-  if (!p || !p.onFoot) return;
-  const x = p.pos.x;
-  const z = p.pos.z;
-  if (groundDist(x, z, 56, -48) < 6) {
-    openShop();
-    return;
-  }
-  if (groundDist(x, z, -56, 130) < 6) {
-    storeCarAtGarage();
-    return;
-  }
-  if (groundDist(x, z, -292, 90) < 6) {
-    tryQuickSave();
-    return;
-  }
-  if (groundDist(x, z, 168, -56) < 6) {
-    tryRespray();
-    return;
-  }
-  enterNearest();
-}
-
-/** Move the player: on foot, driving, boating or flying. */
-export function updatePlayer(dt) {
-  const p = G.player;
-  if (!p) return;
-  if (!p.onFoot && p.vehicle) {
-    updateVehicle(dt);
-    return;
-  }
-  // On foot: WASD relative to the camera yaw.
-  const speed = input.run ? 8.5 : 5;
-  let mx = 0;
-  let mz = 0;
-  if (input.forward) {
-    mx -= Math.sin(input.camYaw);
-    mz -= Math.cos(input.camYaw);
-  }
-  if (input.back) {
-    mx += Math.sin(input.camYaw);
-    mz += Math.cos(input.camYaw);
-  }
-  if (input.left) {
-    mx -= Math.cos(input.camYaw);
-    mz += Math.sin(input.camYaw);
-  }
-  if (input.right) {
-    mx += Math.cos(input.camYaw);
-    mz -= Math.sin(input.camYaw);
-  }
-  const len = Math.hypot(mx, mz);
-  if (len > 0) {
-    mx /= len;
-    mz /= len;
-    p.speed = speed;
-    const nx = p.pos.x + mx * speed * dt;
-    const nz = p.pos.z + mz * speed * dt;
-    // Slide along buildings instead of walking through them.
-    if (!insideBuilding(nx, p.pos.z)) p.pos.x = nx;
-    if (!insideBuilding(p.pos.x, nz)) p.pos.z = nz;
-    p.yaw = Math.atan2(mx, mz);
+export function updateOnFoot(G, mesh, input, dt) {
+  const speed = input.shift ? 9 : 5.2;
+  let mx = 0, mz = 0;
+  if (input.w) mz += 1;
+  if (input.s) mz -= 1;
+  if (input.a) mx -= 1;
+  if (input.d) mx += 1;
+  const moving = mx !== 0 || mz !== 0;
+  if (moving) {
+    // Movement is relative to the camera yaw.
+    const cy = G.camYaw || 0;
+    const fx = Math.sin(cy), fz = Math.cos(cy);
+    const rx = Math.cos(cy), rz = -Math.sin(cy);
+    const dx = fx * mz + rx * mx;
+    const dz = fz * mz + rz * mx;
+    const len = Math.sqrt(dx * dx + dz * dz) || 1;
+    G.pos.x += (dx / len) * speed * dt;
+    G.pos.z += (dz / len) * speed * dt;
+    G.pos.yaw = Math.atan2(dx, dz);
+    const c = clampWorld(G.pos.x, G.pos.z);
+    G.pos.x = c.x; G.pos.z = c.z;
+    G.speed = speed;
   } else {
-    p.speed = 0;
+    G.speed = 0;
   }
-  p.pos.x = clamp(p.pos.x, -335, 285);
-  p.pos.z = clamp(p.pos.z, -228, 228);
+  mesh.group.position.set(G.pos.x, 0, G.pos.z);
+  mesh.group.rotation.y = G.pos.yaw;
+  return moving;
 }
 
-/** Drive the current vehicle (car, boat or helicopter). */
-function updateVehicle(dt) {
-  const p = G.player;
-  const v = p.vehicle;
-  if (v.kind === 'heli') {
-    updateFlyHeli(dt, input);
-    p.pos.copy(v.mesh.position);
-    p.yaw = v.yaw;
-    return;
-  }
-  if (v.kind === 'boat' || v.kind === 'yacht') {
-    const target = input.forward ? 16 : input.back ? -5 : 0;
-    v.speed += (target - v.speed) * Math.min(1, dt * 1.2);
-    if (input.left) v.yaw += dt * 0.9 * Math.sign(v.speed || 1);
-    if (input.right) v.yaw -= dt * 0.9 * Math.sign(v.speed || 1);
-    v.mesh.position.x += Math.sin(v.yaw) * v.speed * dt;
-    v.mesh.position.z += Math.cos(v.yaw) * v.speed * dt;
-    v.mesh.position.x = clamp(v.mesh.position.x, -420, -276);
-    v.mesh.position.z = clamp(v.mesh.position.z, -230, 230);
-    v.mesh.rotation.y = v.yaw;
-    v.mesh.position.y = 0.1 + Math.sin(performance.now() / 700) * 0.08;
-    p.pos.copy(v.mesh.position);
-    p.yaw = v.yaw;
-    return;
-  }
-  // Car: arcade driving with steering, building and traffic bumps.
-  const maxSpeed = 26;
-  if (input.forward) v.speed = Math.min(maxSpeed, v.speed + 15 * dt);
-  else if (input.back) v.speed = Math.max(-8, v.speed - 18 * dt);
-  else v.speed *= Math.max(0, 1 - dt * 1.4);
-  if (Number.isFinite(v.speed) === false) v.speed = 0;
-  const steer = (input.left ? 1 : 0) - (input.right ? 1 : 0);
-  const gripFactor = 0.6 + (G.grip / 100) * 0.6;
-  v.yaw += steer * dt * 1.9 * clamp(Math.abs(v.speed) / 10, 0, 1) * Math.sign(v.speed || 1) * gripFactor;
-  const nx = v.mesh.position.x + Math.sin(v.yaw) * v.speed * dt;
-  const nz = v.mesh.position.z + Math.cos(v.yaw) * v.speed * dt;
-  if (insideBuilding(nx, nz)) {
-    // Bounce off the wall: lose speed and condition.
-    v.speed *= -0.25;
-    v.condition = Math.max(0, v.condition - 4);
-    G.grip = Math.max(0, G.grip - 4);
-  } else {
-    v.mesh.position.x = nx;
-    v.mesh.position.z = nz;
-  }
-  // Bump into traffic cars.
-  for (const other of G.cars) {
-    if (other === v || other.isPlayer) continue;
-    const d = groundDist(v.mesh.position.x, v.mesh.position.z, other.mesh.position.x, other.mesh.position.z);
-    if (d < 3.4 && Math.abs(v.speed) > 3) {
-      v.speed *= 0.5;
-      v.condition = Math.max(0, v.condition - 3);
-      G.grip = Math.max(0, G.grip - 3);
+export function updateDriving(G, car, input, dt) {
+  // Arcade handling: W accelerates, S brakes/reverses, A/D steer.
+  // GRIP falls while steering hard at speed; condition falls on hits.
+  const maxSpeed = 34;
+  if (input.w) car.speed = Math.min(maxSpeed, car.speed + 22 * dt);
+  else if (input.s) car.speed = Math.max(-8, car.speed - 26 * dt);
+  else car.speed *= (1 - Math.min(1, dt * 0.9));
+  const steerInput = (input.a ? 1 : 0) - (input.d ? 1 : 0);
+  const spd = car.speed;
+  if (Math.abs(spd) > 0.5) {
+    car.yaw += steerInput * 1.7 * dt * clamp(Math.abs(spd) / 12, 0.3, 1) * (spd >= 0 ? 1 : -1);
+    if (steerInput !== 0 && Math.abs(spd) > 14) {
+      G.grip = clamp(G.grip - 14 * dt, 0, 100);
+    } else {
+      G.grip = clamp(G.grip + 8 * dt, 0, 100);
     }
   }
-  // Stunt jump lift: a ramp launch raises the car briefly.
-  if (v.jumpT && v.jumpT > 0) {
-    v.jumpT -= dt;
-    v.mesh.position.y = Math.sin((1 - v.jumpT / 1.2) * Math.PI) * 3.2;
-  } else {
-    v.mesh.position.y = 0;
+  const fx = Math.sin(car.yaw), fz = Math.cos(car.yaw);
+  car.x += fx * spd * dt;
+  car.z += fz * spd * dt;
+  const c = clampWorld(car.x, car.z);
+  if (c.x !== car.x || c.z !== car.z) {
+    car.x = c.x; car.z = c.z;
+    car.speed *= -0.3;
+    G.condition = clamp(G.condition - 4, 0, 100);
   }
-  // Grip grows with clean fast driving.
-  if (Math.abs(v.speed) > 15) G.grip = Math.min(100, G.grip + dt * 2);
-  v.mesh.position.x = clamp(v.mesh.position.x, -310, 282);
-  v.mesh.position.z = clamp(v.mesh.position.z, -222, 226);
-  v.mesh.rotation.y = v.yaw;
-  p.pos.copy(v.mesh.position);
-  p.yaw = v.yaw;
-  p.speed = Math.abs(v.speed);
+  G.pos.x = car.x; G.pos.z = car.z; G.pos.yaw = car.yaw;
+  G.speed = spd;
+  syncCar(car);
+  return car;
 }
 
-/** Where the camera looks: the player, or the vehicle they are in. */
-export function cameraTarget() {
-  const p = G.player;
-  if (!p) return { x: 0, y: 1.5, z: 0, yaw: 0 };
-  return { x: p.pos.x, y: p.pos.y + 1.6, z: p.pos.z, yaw: p.yaw };
+export function exitVehicle(G, mesh) {
+  // Step out to the driver's side.
+  const side = Math.PI / 2;
+  G.pos.x = G.pos.x + Math.sin(G.pos.yaw + side) * 2.5;
+  G.pos.z = G.pos.z + Math.cos(G.pos.yaw + side) * 2.5;
+  const c = clampWorld(G.pos.x, G.pos.z);
+  G.pos.x = c.x; G.pos.z = c.z;
+  G.mode = 'foot';
+  G.car = null;
+  G.speed = 0;
+  mesh.group.position.set(G.pos.x, 0, G.pos.z);
+  mesh.group.visible = true;
+}
+
+export function enterVehicle(G, mesh, car) {
+  G.mode = 'car';
+  G.car = car;
+  G.pos.x = car.x; G.pos.z = car.z; G.pos.yaw = car.yaw;
+  mesh.group.visible = false;
+  if (car.kind !== 'police') G.carsStolen += 1;
+}
+
+export function switchCharacter(G, scene, mesh) {
+  G.character = G.character === 'Jason' ? 'Lucia' : 'Jason';
+  G.role = G.character === 'Lucia' ? 'DRIVER' : 'RUNNER';
+  return G.character;
+}
+
+// Horn: a short blip flag the HUD can show, plus the audio hook.
+export function honk(G) {
+  G.hornAt = Date.now();
+  return true;
+}
+// Drive-by shooting is only possible from a vehicle with a gun out.
+export function canDriveBy(G) {
+  return G.mode === 'car' && G.activeWeapon > 0;
+}
+// Repair the current car at a respray (costs $150, restores condition).
+export function respray(G) {
+  if (G.cash < 150) return false;
+  G.cash -= 150;
+  G.condition = 100;
+  return true;
 }

@@ -4,70 +4,61 @@
 
 # Solmar City — The Solmar Reign
 
-An open-world crime game in the spirit of GTA 6, built for the make.fun bounty [gta6-01](https://make.fun/bounty/gta6-01). A sun-soaked modern city on the bay, seven districts, a three-act campaign, and a living world of traffic, pedestrians, police and radio.
+An open-world crime game in a desktop browser, built for the [make.fun "Make GTA 6" bounty](https://make.fun/bounty/gta6-01). One city, seven districts, three acts, eight missions and two endings — all offline, no network assets.
 
-## The story
-
-Dario Vasquez owes Rook Calloway fifty grand. Rook sends Dario's kid brother Leo to collect, and Leo — fresh off the ferry with $800 and no crew — has to work the debt off district by district, or take the crown himself. Three acts, eight missions, two endings: **Take the Crown** or **Stay Loyal**.
-
-## What is in the game
-
-- **A full city**: 7 named districts (Downtown, Neon Mile, Old Town, Marina Bay, Kumala Beach, Portside, Palms Suburb), each with its own look and its own standing that moves as the story moves — win a district by finishing its story beats, and hold it.
-- **The campaign**: 8 missions with scripted dialogue between named characters — Marta the garage boss, Rook the debt holder, Leo and Jason/Lucia — each briefing lists every stage before you start.
-- **Progression**: rank and RP, respect, armour, a 5-slot weapon inventory with ammo (pistol, SMG, shotgun, rifle, fists), and a career stats screen in the pause menu: cash, respect, districts held, hidden packages, stunt jumps, races won, cars stolen, best wanted level.
-- **The world, alive**: traffic with real drivers, pedestrians who flee from gunfire, police cars, foot cops and a helicopter with a searchlight at 4+ stars, a 5-star wanted system that decays when you lay low.
-- **Vehicles**: steal any car, drive boats and yachts, fly a helicopter from the helipad. Taxi fares and courier deliveries pay on the side. A car-export point pays for stolen rides.
-- **Side activities**: 21 hidden packages across the 7 districts, 5 stunt jumps, and the Neon Mile Sprint race — all tracked in the stats screen.
-- **Money to spend**: Kelo Arms (Ammu-Nation) sells weapons, ammo and armour; the Sunset Garage property stores your cars; a respray loses the heat. The garage costs $4,000 and holds your stolen rides.
-- **Atmosphere**: 2048px shadow maps, ACES tone mapping, a sky dome with sun, moon and clouds, fog, rain with wet roads, emissive neon and headlights, a full day/night cycle, and three named radio stations (Vice FM 88.4, Neon Rock 101.7, Wave FM 94.2) with track names in the HUD.
-- **Save**: quick save at Marta's Loft, auto-save after every mission, Continue on the title screen.
-
-## How to run
-
-No build step, no network. Serve the `game/` directory with any static file server and open `index.html` in desktop Chrome:
+## Play
 
 ```sh
-cd game && python3 -m http.server 8000
-# then open http://localhost:8000
+node serve.ts        # serves http://localhost:8080/
 ```
 
-Or open `game/index.html` directly from the file system.
+Open the page, click **START**, and drive. WASD moves and drives, mouse drags the camera, E interacts, F enters and exits cars, Click shoots, R reloads, 1–5 switch weapons, Q opens the weapon wheel, C switches between Jason and Lucia, V cycles the radio, T starts a taxi fare, Y starts a courier job, M opens the full map, Esc pauses.
 
-## Controls
+## The campaign — "The Solmar Reign"
 
-| Key | Action |
-| --- | --- |
-| WASD | Move on foot / drive |
-| Mouse drag | Orbit the camera |
-| Click | Shoot the current weapon |
-| R | Reload |
-| 1–5 | Select weapon (Q holds the weapon wheel) |
-| F | Enter / exit a car, boat or helicopter |
-| E | Interact (shop, garage, safehouse, respray) |
-| C | Switch between Jason and Lucia |
-| V | Change radio station |
-| T | Start a taxi fare |
-| Y | Start a courier delivery |
-| M | Full city map (districts, legend, standings) |
-| Esc | Pause — career stats and the story list |
+| Mission | Act | Payout | What happens |
+| --- | --- | --- | --- |
+| M1 First Wheels | 1 | $1,350 | Meet Marta, take the corner car to the loft |
+| M2 Neon Nights | 1 | $1,800 | Run a package across the Neon Mile |
+| M3 Harbor Run | 2 | $2,200 | The yacht deal on the water at Marina Bay |
+| M4 The Getaway | 2 | $3,000 | A sports car and a two-star tail |
+| M5 Set Up | 2 | $3,000 | Survive an 18-second ambush at four stars |
+| M6 Harbor Lights | 2 | $3,350 | Steal the white yacht, sail it to the buyer |
+| M7 The Big One | 3 | $9,500 | Ten seconds on the Downtown vault crack |
+| M8 The Choice | 3 | $25,000 | Take the Crown, or Stay Loyal |
 
-## The missions
+Cash runs $800 → $50,000, respect 0 → 100. Mission briefings list every stage, and the story is told through scripted dialogue with Marta the garage boss, Rook the debt holder, Dario and Jason/Lucia.
 
-1. **First Wheels** ($1,350) — Marta hands Leo a sedan. Steal it, bring it to the garage.
-2. **Neon Nights** ($1,800) — Race the Neon Mile for Rook's money, then drive it to the bank.
-3. **Harbor Run** ($2,200) — A truck of Rook's cargo, from the port to the garage, in the rain.
-4. **The Getaway** ($3,000) — Steal the sports car at the Marina, lose two stars.
-5. **Set Up** ($3,000) — An ambush in Old Town at night. Survive 18 seconds at four stars.
-6. **Harbor Lights** ($3,350) — Steal the white yacht, sail it to the buyer under four stars.
-7. **The Big One** ($9,500) — Crack the Solmar Bank vault in ten seconds.
-8. **The Choice** ($25,000) — The crown or the crew. Two endings.
+## The city
 
-The arc runs $800 → $50,000.
+Seven named districts — Downtown, Neon Mile, Old Town, Marina Bay, Kumala Beach, Portside, Palms Suburb — each with standing that moves as you play (+35 per story mission, +10 per race win, +5 per hidden package). Districts you win are held and shown on the full-screen map (M), which also carries the legend: Mission, Police, Respray, Kelo Arms, Safehouse, Car Export, Side Job, Garage.
 
-## Built with
+Side content: 21 hidden packages (3 per district), 5 stunt jumps, the Neon Mile Sprint race, taxi fares, courier jobs with a fast bonus, a flyable helicopter (Space climbs), boats and yachts in the bay, and a police force with a helicopter searchlight at three stars and up.
 
-Three.js (vendored under `game/vendor/`), plain JavaScript modules, procedural canvas textures and synthesized radio — no downloaded assets, no network requests. `main.ts` hands the game in with the make.fun dossier library (`vendor/makefun-game.ts`).
+## Systems
 
-## Play it on make.fun
+- Rank and RP, armour, a five-slot weapon inventory with ammo (Fists, .38 Pistol, SMG, 12G Shotgun, AR-9)
+- Kelo Arms weapon shop (SMG $800) and the Sunset Garage property ($4,000 — store and retrieve your car)
+- Three named radio stations with the current track in the HUD: Vice FM 88.4, Neon Rock 101.7, Wave FM 94.2
+- Day clock, role tag, GRIP meter, vehicle-condition bar, weapon wheel, quick save at the safehouse, horn, drive-by shooting
+- Career stats screen: cash, respect, districts held, packages, jumps, races, cars stolen, best wanted
+- Save/load round-trip via localStorage (F9 at the safehouse)
 
-Enter the bounty and play the game at [make.fun/bounty/gta6-01](https://make.fun/bounty/gta6-01). If you sign up, use referral code **b3wnek95** — https://make.fun/r/b3wnek95.
+## Graphics
+
+2048px shadow maps, ACES tone mapping, a sky dome with sun, moon and clouds, FogExp2, procedural canvas textures (brick, lit windows, asphalt, neon signs, sand, water), rain with wet roads, emissive neon, headlights and taillights, and a coherent teal / purple / orange sunset palette. Day/night cycle included.
+
+## Layout
+
+- `game/index.html` — page shell, import map, HUD and menus
+- `game/src/` — the game, one module per system (`state`, `graphics`, `city`, `vehicles`, `people`, `player`, `police`, `missions`, `combat`, `activities`, `hud`, `audio`, `save`, `shots`, `util`, `main`)
+- `game/vendor/` — vendored Three.js (no CDN, no network)
+- `main.ts` — builds `dossier.json` deterministically (`node main.ts`, run twice, byte-identical)
+- `serve.ts` — local static dev server (`node serve.ts`, then http://localhost:8080/)
+- `screenshots/` — the four dossier shots (chase, drive, foot, mission)
+
+## License
+
+MIT — see `LICENSE`.
+
+<!-- Built for the make.fun "Make GTA 6" bounty: https://make.fun/bounty/gta6-01 -->

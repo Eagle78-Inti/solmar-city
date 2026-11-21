@@ -1,175 +1,117 @@
-// combat.js — weapons, shooting (including drive-by from a car), damage and
-// getting wasted. Five slots: fists plus four guns with ammo and reserves.
+// combat.js — weapons, shooting, the weapon wheel, drive-by.
+import { clamp, dist2d } from './util.js';
 
-import { G, addRp, toast } from './state.js';
-import { clamp, groundDist } from './util.js';
-import { addWanted } from './police.js';
-import { shootSound } from './audio.js';
-
-const MAG_SIZE = { 2: 12, 3: 30, 4: 6, 5: 30 };
-
-/** The currently selected weapon. */
-export function currentWeapon() {
-  return G.weapons[G.weaponSlot - 1];
+export function currentWeapon(G) {
+  return G.weapons[G.activeWeapon];
 }
-
-/** Fire the current weapon at what the camera points at. */
-export function fire() {
-  const p = G.player;
-  if (!p || G.paused || !G.started) return false;
-  const w = currentWeapon();
-  if (!w || !w.owned) return false;
-  if (w.slot !== 1 && w.ammo <= 0) {
-    toast('Click — ' + w.name + ' is empty. Press R to reload.', 2);
-    return false;
-  }
-  if (w.slot !== 1) w.ammo--;
-  G.stats.shots++;
-  shootSound();
-  const driveBy = !p.onFoot && p.vehicle && (p.vehicle.kind === 'car' || p.vehicle.kind === 'sedan' || p.vehicle.kind === 'taxi' || p.vehicle.kind === 'truck' || p.vehicle.kind === 'sports' || p.vehicle.kind === 'police');
-  const ox = p.pos.x;
-  const oz = p.pos.z;
-  const dir = G.camDir || { x: 0, z: 1 };
-  const range = driveBy ? w.range * 0.7 : w.range;
-  // Nearest person roughly in front of the aim direction.
-  let best = null;
-  let bestD = range;
-  for (const ped of [...G.peds, ...G.cops]) {
-    if (ped.health <= 0) continue;
-    const dx = ped.mesh.position.x - ox;
-    const dz = ped.mesh.position.z - oz;
-    const d = Math.hypot(dx, dz);
-    if (d > range || d < 0.5) continue;
-    const dot = (dx * dir.x + dz * dir.z) / d;
-    if (dot < 0.86) continue; // about 30 degrees of aim
-    if (d < bestD) {
-      bestD = d;
-      best = ped;
-    }
-  }
-  if (best) {
-    best.health -= w.damage;
-    if (best.health <= 0) {
-      best.health = 0;
-      if (best.mesh.parent) best.mesh.parent.remove(best.mesh);
-      const i = G.peds.indexOf(best);
-      if (i >= 0) G.peds.splice(i, 1);
-      const j = G.cops.indexOf(best);
-      if (j >= 0) G.cops.splice(j, 1);
-      G.stats.kills++;
-      addRp(10);
-      addWanted(1);
-    }
-    return true;
-  }
-  // Otherwise, check police cars in the line of fire.
-  for (const car of G.police) {
-    const dx = car.mesh.position.x - ox;
-    const dz = car.mesh.position.z - oz;
-    const d = Math.hypot(dx, dz);
-    if (d > range || d < 1) continue;
-    const dot = (dx * dir.x + dz * dir.z) / d;
-    if (dot < 0.86) continue;
-    car.condition = Math.max(0, (car.condition || 100) - w.damage);
-    if (car.condition <= 0) {
-      car.cruise = 0;
-      car.speed = 0;
-      toast('Police car disabled', 2);
-    }
-    return true;
-  }
-  return true;
+export function weaponAmmoText(G) {
+  const w = currentWeapon(G);
+  if (!w) return '';
+  if (w.ammo === Infinity) return `${w.name} ∞`;
+  return `${w.name} ${w.ammo}/${w.reserve}`;
 }
-
-/** Reload the current weapon from its reserve. */
-export function reload() {
-  const w = currentWeapon();
-  if (!w || w.slot === 1) return;
-  const mag = MAG_SIZE[w.slot] || 12;
-  const need = mag - w.ammo;
-  const take = Math.min(need, w.reserve);
-  if (take <= 0) {
-    toast('No reserve ammo for the ' + w.name, 2);
-    return;
-  }
-  w.ammo += take;
-  w.reserve -= take;
-}
-
-/** The player takes damage: armour absorbs first, then health. */
-export function takeDamage(amount) {
-  if (!G.player) return;
-  let left = amount;
-  if (G.armour > 0) {
-    const absorbed = Math.min(G.armour, left);
-    G.armour -= absorbed;
-    left -= absorbed;
-  }
-  G.health = Math.max(0, G.health - left);
-  if (G.health <= 0) wasted();
-}
-
-/** Wasted: the hospital patches the player up, minus 10% of the cash. */
-export function wasted() {
-  const p = G.player;
-  if (!p) return;
-  if (p.vehicle) {
-    p.vehicle.isPlayer = false;
-    p.vehicle = null;
-    p.onFoot = true;
-    p.mesh.visible = true;
-  }
-  G.cash = Math.floor(G.cash * 0.9);
-  G.health = 100;
-  G.armour = 0;
-  G.wanted = 0;
-  p.pos.set(0, 0, 84);
-  p.mesh.position.copy(p.pos);
-  toast('WASTED — the hospital patched you up. The city took 10% of your cash.', 5);
-}
-
-/** Heal the player (pickups, safehouse rest). */
-export function heal(amount) {
-  G.health = clamp(G.health + amount, 0, 100);
-}
-
-/** Select a weapon slot from the weapon wheel (only owned weapons). */
-export function selectWeaponSlot(slot) {
-  const w = G.weapons[slot - 1];
-  if (w && w.owned) {
-    G.weaponSlot = slot;
-    return true;
-  }
+export function selectWeapon(G, slot) {
+  const i = G.weapons.findIndex(w => w.slot === slot);
+  if (i >= 0) { G.activeWeapon = i; return true; }
   return false;
 }
-
-/** Give ammo to a weapon slot (shop purchases, pickups). */
-export function giveAmmo(slot, amount) {
-  const w = G.weapons[slot - 1];
-  if (!w) return;
-  w.owned = true;
-  w.reserve += amount;
-  if (w.ammo === 0) {
-    const mag = MAG_SIZE[slot] || 12;
-    const take = Math.min(mag, w.reserve);
-    w.ammo += take;
-    w.reserve -= take;
-  }
+export function cycleWeapon(G) {
+  G.activeWeapon = (G.activeWeapon + 1) % G.weapons.length;
+  return currentWeapon(G);
 }
-
-/** Buy armour: $300 for 50 armour. */
-export function buyArmour() {
-  if (G.cash < 300) return false;
-  if (G.armour >= 100) return false;
-  G.cash -= 300;
-  G.armour = Math.min(100, G.armour + 50);
+export function buyWeapon(G, slot) {
+  // Kelo Arms prices: SMG $800, Shotgun $1,200, AR-9 $2,000.
+  const prices = { 3: 800, 4: 1200, 5: 2000 };
+  const price = prices[slot];
+  if (!price) return false;
+  if (G.cash < price) return false;
+  const w = G.weapons.find(x => x.slot === slot);
+  if (!w) return false;
+  G.cash -= price;
+  if (slot === 3) { w.ammo = 32; w.reserve = 128; }
+  if (slot === 4) { w.ammo = 6; w.reserve = 24; }
+  if (slot === 5) { w.ammo = 30; w.reserve = 120; }
+  G.activeWeapon = G.weapons.indexOf(w);
   return true;
 }
+// Fire the current weapon. Returns a hit record or null.
+// Shooting is hitscan against peds and police cars near the aim line.
+export function shoot(G, world, targetX, targetZ) {
+  const w = currentWeapon(G);
+  if (!w) return null;
+  if (w.ammo !== Infinity) {
+    if (w.ammo <= 0) {
+      // Auto-reload from reserve.
+      if (w.reserve > 0) {
+        const need = w.slot === 3 ? 32 : w.slot === 4 ? 6 : w.slot === 5 ? 30 : 12;
+        const take = Math.min(need, w.reserve);
+        w.reserve -= take; w.ammo = take;
+      } else return { fired: false, reason: 'no ammo' };
+    }
+    w.ammo -= 1;
+  }
+  G.lastShotAt = Date.now();
+  // Find the closest ped or police car within a cone of the aim point.
+  let best = null, bd = 1e9;
+  for (const p of world.peds) {
+    const d = dist2d(p.x, p.z, targetX, targetZ);
+    if (d < 6 && d < bd) { bd = d; best = { kind: 'ped', obj: p }; }
+  }
+  for (const c of world.police) {
+    const d = dist2d(c.x, c.z, targetX, targetZ);
+    if (d < 7 && d < bd) { bd = d; best = { kind: 'police', obj: c }; }
+  }
+  if (best) {
+    if (best.kind === 'ped') {
+      best.obj.health = (best.obj.health || 100) - w.damage;
+      if (best.obj.health <= 0) {
+        // The ped falls and stays down.
+        best.obj.down = true;
+        best.obj.group.rotation.x = Math.PI / 2;
+        best.obj.group.position.y = 0.3;
+      }
+    } else {
+      best.obj.condition = clamp((best.obj.condition || 100) - w.damage, 0, 100);
+      if (best.obj.condition <= 0) best.obj.speed = 0;
+    }
+    return { fired: true, hit: best.kind, damage: w.damage };
+  }
+  return { fired: true, hit: null };
+}
+export function weaponWheelItems(G) {
+  return G.weapons.map((w, i) => ({
+    slot: w.slot, name: w.name,
+    ammo: w.ammo === Infinity ? '∞' : `${w.ammo}/${w.reserve}`,
+    active: i === G.activeWeapon,
+    owned: w.ammo > 0 || w.ammo === Infinity || w.reserve > 0,
+  }));
+}
+// Damage the player (used by police rams and falls).
+export function damagePlayer(G, n) {
+  if (G.armour > 0) {
+    const absorbed = Math.min(G.armour, n * 0.6);
+    G.armour -= absorbed;
+    G.health = clamp(G.health - (n - absorbed), 0, 100);
+  } else {
+    G.health = clamp(G.health - n, 0, 100);
+  }
+  return G.health;
+}
 
-/** The player's current weapon as a HUD label, e.g. "SMG 24/90". */
-export function weaponLabel() {
-  const w = currentWeapon();
-  if (!w) return '';
-  if (w.slot === 1) return 'Fists ∞';
-  return w.name + ' ' + w.ammo + '/' + w.reserve;
+// Ammo top-up at the shop (not a weapon purchase).
+export function buyAmmo(G, slot, amount) {
+  const w = G.weapons.find(x => x.slot === slot);
+  if (!w || w.ammo === Infinity) return false;
+  const cost = amount * 2;
+  if (G.cash < cost) return false;
+  G.cash -= cost;
+  w.reserve += amount;
+  return true;
+}
+// Armour top-up at the shop: $100 for 25 armour.
+export function buyArmour(G) {
+  if (G.cash < 100) return false;
+  G.cash -= 100;
+  G.armour = clamp(G.armour + 25, 0, 100);
+  return true;
 }

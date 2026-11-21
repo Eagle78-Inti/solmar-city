@@ -1,136 +1,98 @@
-// save.js — saving and loading the game in localStorage, including the
-// quick save at Marta's Loft and the auto-save after every mission.
+// save.js — save/load round-trip via localStorage.
+// Only plain progress data is stored; runtime objects are rebuilt.
+const KEY = 'solmar-city-save-v10';
 
-import { DISTRICTS, G, toast } from './state.js';
-
-/** Collect everything worth keeping into one plain object. */
-function snapshot() {
-  const p = G.player;
-  return {
-    version: 10,
-    cash: G.cash,
-    respect: G.respect,
-    rp: G.rp,
-    rank: G.rank,
-    health: G.health,
-    armour: G.armour,
-    day: G.day,
-    time: G.time,
-    weather: G.weather,
-    character: G.character,
-    act: G.act,
-    missionDone: G.missionDone,
+export function saveGame(G) {
+  const data = {
+    v: 10,
+    cash: G.cash, respect: G.respect, rank: G.rank, rp: G.rp,
+    health: G.health, armour: G.armour,
+    character: G.character, role: G.role,
+    day: G.day, time: G.time,
+    wanted: G.wanted, bestWanted: G.bestWanted,
+    weapons: G.weapons.map(w => ({ slot: w.slot, ammo: w.ammo === Infinity ? 'inf' : w.ammo, reserve: w.reserve === Infinity ? 'inf' : w.reserve })),
+    activeWeapon: G.activeWeapon,
+    missions: G.missions.map(m => ({ id: m.id, done: m.done })),
+    missionIdx: G.missionIdx,
+    districts: G.districts.map(d => ({ name: d.name, standing: d.standing, held: d.held })),
+    packagesFound: G.packagesFound,
+    jumpsDone: G.jumpsDone, racesWon: G.racesWon, carsStolen: G.carsStolen,
+    taxiFares: G.taxiFares, courierJobs: G.courierJobs,
+    garageOwned: G.garageOwned, garageCar: G.garageCar,
+    pos: { x: G.pos.x, z: G.pos.z, yaw: G.pos.yaw },
     ending: G.ending,
-    weapons: G.weapons.map((w) => ({ slot: w.slot, ammo: w.ammo, reserve: w.reserve, owned: w.owned })),
-    weaponSlot: G.weaponSlot,
-    garage: { owned: G.garage.owned, cars: G.garage.cars },
-    stats: G.stats,
-    standings: DISTRICTS.map((d) => ({ name: d.name, standing: d.standing })),
-    collectibles: G.collectibles.map((c) => c.found),
-    jumps: G.jumps.map((j) => j.done),
-    player: p ? { x: p.pos.x, z: p.pos.z, yaw: p.yaw } : null,
+    radioIdx: G.radioIdx, trackIdx: G.trackIdx,
+    savedAt: new Date().toISOString(),
   };
-}
-
-/** Write the snapshot to localStorage. */
-export function saveGame() {
   try {
-    localStorage.setItem(G.saveSlot, JSON.stringify(snapshot()));
+    localStorage.setItem(KEY, JSON.stringify(data));
     return true;
-  } catch (e) {
-    return false;
-  }
+  } catch (e) { return false; }
 }
 
-/** Read a save back and apply it. Returns true when a save was loaded. */
 export function loadGame() {
-  let raw = null;
   try {
-    raw = localStorage.getItem(G.saveSlot);
-  } catch (e) {
-    return false;
-  }
-  if (!raw) return false;
-  let s = null;
-  try {
-    s = JSON.parse(raw);
-  } catch (e) {
-    return false;
-  }
-  if (!s || s.version !== 10) return false;
-  G.cash = s.cash;
-  G.respect = s.respect;
-  G.rp = s.rp;
-  G.rank = s.rank;
-  G.health = s.health;
-  G.armour = s.armour;
-  G.day = s.day;
-  G.time = s.time;
-  G.weather = s.weather;
-  G.character = s.character;
-  G.act = s.act;
-  G.missionDone = s.missionDone;
-  G.ending = s.ending;
-  s.weapons.forEach((w, i) => {
-    if (G.weapons[i]) {
-      G.weapons[i].ammo = w.ammo;
-      G.weapons[i].reserve = w.reserve;
-      G.weapons[i].owned = w.owned;
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d || d.v !== 10) return null;
+    return d;
+  } catch (e) { return null; }
+}
+
+export function applySave(G, d) {
+  if (!d) return false;
+  G.cash = d.cash; G.respect = d.respect; G.rank = d.rank; G.rp = d.rp;
+  G.health = d.health; G.armour = d.armour;
+  G.character = d.character; G.role = d.role;
+  G.day = d.day; G.time = d.time;
+  G.wanted = d.wanted; G.bestWanted = d.bestWanted;
+  for (const w of d.weapons) {
+    const mine = G.weapons.find(x => x.slot === w.slot);
+    if (mine) {
+      mine.ammo = w.ammo === 'inf' ? Infinity : w.ammo;
+      mine.reserve = w.reserve === 'inf' ? Infinity : w.reserve;
     }
-  });
-  G.weaponSlot = s.weaponSlot;
-  G.garage = s.garage;
-  G.stats = s.stats;
-  s.standings.forEach((st) => {
-    const d = DISTRICTS.find((x) => x.name === st.name);
-    if (d) d.standing = st.standing;
-  });
-  s.collectibles.forEach((found, i) => {
-    if (G.collectibles[i]) {
-      G.collectibles[i].found = found;
-      if (found && G.collectibles[i].mesh && G.collectibles[i].mesh.parent) {
-        G.collectibles[i].mesh.parent.remove(G.collectibles[i].mesh);
-      }
-    }
-  });
-  s.jumps.forEach((done, i) => {
-    if (G.jumps[i]) G.jumps[i].done = done;
-  });
-  if (s.player && G.player) {
-    G.player.pos.set(s.player.x, 0, s.player.z);
-    G.player.mesh.position.copy(G.player.pos);
-    G.player.yaw = s.player.yaw;
   }
+  G.activeWeapon = d.activeWeapon;
+  for (const m of d.missions) {
+    const mine = G.missions.find(x => x.id === m.id);
+    if (mine) mine.done = m.done;
+  }
+  G.missionIdx = d.missionIdx;
+  for (const dd of d.districts) {
+    const mine = G.districts.find(x => x.name === dd.name);
+    if (mine) { mine.standing = dd.standing; mine.held = dd.held; }
+  }
+  G.packagesFound = d.packagesFound;
+  G.jumpsDone = d.jumpsDone; G.racesWon = d.racesWon; G.carsStolen = d.carsStolen;
+  G.taxiFares = d.taxiFares; G.courierJobs = d.courierJobs;
+  G.garageOwned = d.garageOwned; G.garageCar = d.garageCar;
+  G.pos.x = d.pos.x; G.pos.z = d.pos.z; G.pos.yaw = d.pos.yaw;
+  G.ending = d.ending;
+  G.radioIdx = d.radioIdx; G.trackIdx = d.trackIdx;
   return true;
 }
 
-/** Does a save exist? (The title screen's Continue button.) */
 export function hasSave() {
-  try {
-    return localStorage.getItem(G.saveSlot) !== null;
-  } catch (e) {
-    return false;
-  }
+  try { return !!localStorage.getItem(KEY); } catch (e) { return false; }
 }
-
-/** Wipe the save slot (a fresh start from the title screen). */
 export function clearSave() {
-  try {
-    localStorage.removeItem(G.saveSlot);
-    return true;
-  } catch (e) {
-    return false;
-  }
+  try { localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
 }
+// The safehouse location (the loft on Neon Mile) for the HUD prompt.
+export const SAFEHOUSE = { x: 56, z: 84 };
 
-/** A one-line summary of the save for the title screen. */
+// Save slot helpers for the pause menu.
 export function saveSummary() {
-  try {
-    const raw = localStorage.getItem(G.saveSlot);
-    if (!raw) return null;
-    const s = JSON.parse(raw);
-    return 'Day ' + s.day + ' · $' + s.cash.toLocaleString('en-US') + ' · Rank ' + s.rank;
-  } catch (e) {
-    return null;
-  }
+  const d = loadGame();
+  if (!d) return null;
+  return `Day ${d.day} · ${'$' + d.cash.toLocaleString()} · ${d.missions.filter(m => m.done).length}/8 missions · saved ${d.savedAt}`;
+}
+export function quickSaveAtSafehouse(G) {
+  // Quick save only counts near the safehouse (the loft on Neon Mile).
+  const dx = G.pos.x - 56, dz = G.pos.z - 84;
+  if (Math.sqrt(dx * dx + dz * dz) > 14) return { ok: false, reason: 'not at the safehouse' };
+  const ok = saveGame(G);
+  return { ok, reason: ok ? 'saved' : 'storage unavailable' };
 }

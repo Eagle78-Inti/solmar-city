@@ -1,204 +1,77 @@
-// audio.js — procedural radio and sound effects. Three named stations with
-// track names shown in the HUD; everything is synthesized, nothing is loaded.
-
-import { G } from './state.js';
-
-/** The three stations, each with its track list. */
-export const STATIONS = [
-  { name: 'Vice FM 88.4', tracks: ['Sunset Drive', 'Palm Shadows', 'Neon Rain'], mood: 'chill' },
-  { name: 'Neon Rock 101.7', tracks: ['Midnight Overdrive', 'Chrome Hearts', 'Gasoline Sky'], mood: 'rock' },
-  { name: 'Wave FM 94.2', tracks: ['Tide Line', 'Salt Air', 'Low Tide Love'], mood: 'bass' },
-];
-
-/** The current track name on the current station. */
-export function currentTrack() {
-  const s = STATIONS[G.radio];
-  if (!s) return '';
-  return s.tracks[G.radioTrack % s.tracks.length];
+// audio.js — tiny procedural WebAudio: engine hum, blips, radio static.
+// No audio files are loaded; everything is synthesized so the game
+// stays fully offline.
+export function createAudio() {
+  const A = { ctx: null, engine: null, engineGain: null, muted: false };
+  A.ensure = function () {
+    if (A.ctx) return;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      A.ctx = new Ctx();
+      const osc = A.ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = 55;
+      const g = A.ctx.createGain();
+      g.gain.value = 0;
+      const filt = A.ctx.createBiquadFilter();
+      filt.type = 'lowpass'; filt.frequency.value = 420;
+      osc.connect(filt); filt.connect(g); g.connect(A.ctx.destination);
+      osc.start();
+      A.engine = osc; A.engineGain = g;
+    } catch (e) { /* audio unavailable — the game runs silent */ }
+  };
+  A.setEngine = function (speed, on) {
+    if (!A.ctx || !A.engineGain) return;
+    const target = on ? 0.03 + Math.min(0.09, Math.abs(speed) * 0.002) : 0;
+    A.engineGain.gain.setTargetAtTime(A.muted ? 0 : target, A.ctx.currentTime, 0.1);
+    if (A.engine) A.engine.frequency.setTargetAtTime(50 + Math.abs(speed) * 2.2, A.ctx.currentTime, 0.1);
+  };
+  A.blip = function (freq, dur) {
+    if (!A.ctx || A.muted) return;
+    try {
+      const o = A.ctx.createOscillator();
+      o.type = 'square'; o.frequency.value = freq || 660;
+      const g = A.ctx.createGain();
+      g.gain.setValueAtTime(0.08, A.ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, A.ctx.currentTime + (dur || 0.12));
+      o.connect(g); g.connect(A.ctx.destination);
+      o.start(); o.stop(A.ctx.currentTime + (dur || 0.12));
+    } catch (e) { /* ignore */ }
+  };
+  A.cash = function () { A.blip(880, 0.1); setTimeout(() => A.blip(1320, 0.16), 90); };
+  A.siren = function () {
+    if (!A.ctx || A.muted) return;
+    try {
+      const o = A.ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(700, A.ctx.currentTime);
+      o.frequency.linearRampToValueAtTime(1100, A.ctx.currentTime + 0.5);
+      o.frequency.linearRampToValueAtTime(700, A.ctx.currentTime + 1.0);
+      const g = A.ctx.createGain();
+      g.gain.setValueAtTime(0.04, A.ctx.currentTime);
+      g.gain.linearRampToValueAtTime(0.001, A.ctx.currentTime + 1.0);
+      o.connect(g); g.connect(A.ctx.destination);
+      o.start(); o.stop(A.ctx.currentTime + 1.0);
+    } catch (e) { /* ignore */ }
+  };
+  return A;
 }
 
-let ctx = null;
-let master = null;
-let radioTimer = null;
-let nextNoteAt = 0;
-let step = 0;
-let trackStartedAt = 0;
-
-function midi(m) {
-  return 440 * Math.pow(2, (m - 69) / 12);
+// Radio station data: the HUD shows the station and the current track;
+// the audio itself is a soft synth pad so the game stays offline.
+export const RADIO_TRACKS = {
+  'Vice FM 88.4': ['Sunset Drive', 'Neon Rain', 'Palms at Midnight', 'Vice City Lights'],
+  'Neon Rock 101.7': ['Midnight Overdrive', 'Chrome Hearts', 'Gasoline Sunset'],
+  'Wave FM 94.2': ['Tide and Chrome', 'Salt Air', 'Boardwalk Static'],
+};
+export function stationTracks(name) { return RADIO_TRACKS[name] || []; }
+export function nextTrack(A, stationName, idx) {
+  const tracks = stationTracks(stationName);
+  return tracks[idx % tracks.length] || '';
 }
-
-/** Create the audio context on the first user gesture. */
-export function initAudio() {
-  if (ctx) return;
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    ctx = new AC();
-    master = ctx.createGain();
-    master.gain.value = 0.5;
-    master.connect(ctx.destination);
-  } catch (e) {
-    ctx = null;
-  }
-}
-
-function resume() {
-  if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
-}
-
-/** A short oscillator note. */
-function note(freq, at, dur, type, vol) {
-  if (!ctx) return;
-  try {
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = type || 'sine';
-    o.frequency.value = freq;
-    g.gain.setValueAtTime(0, at);
-    g.gain.linearRampToValueAtTime(vol || 0.12, at + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.001, at + dur);
-    o.connect(g);
-    g.connect(master);
-    o.start(at);
-    o.stop(at + dur + 0.05);
-  } catch (e) {
-    // Audio is best-effort: never let it break the game.
-  }
-}
-
-/** The radio scheduler: schedules the current station's pattern ahead. */
-function scheduleRadio() {
-  if (!ctx) return;
-  resume();
-  const station = STATIONS[G.radio];
-  const ahead = ctx.currentTime + 0.35;
-  while (nextNoteAt < ahead) {
-    const s = step % 16;
-    if (station.mood === 'chill') {
-      // Slow pads: a chord every 4 steps, a high sparkle note sometimes.
-      if (s % 4 === 0) {
-        const root = [57, 60, 64][Math.floor(step / 4) % 3];
-        note(midi(root), nextNoteAt, 1.6, 'triangle', 0.07);
-        note(midi(root + 7), nextNoteAt, 1.6, 'triangle', 0.05);
-        note(midi(root + 12), nextNoteAt, 1.4, 'sine', 0.04);
-      }
-      if (s === 6 || s === 14) note(midi(76 + (step % 3)), nextNoteAt, 0.5, 'sine', 0.05);
-    } else if (station.mood === 'rock') {
-      // Fast arpeggio over a driving bass.
-      const arp = [57, 60, 64, 69, 64, 60];
-      note(midi(arp[s % 6]), nextNoteAt, 0.16, 'square', 0.05);
-      if (s % 4 === 0) note(midi(33), nextNoteAt, 0.3, 'sawtooth', 0.09);
-      if (s % 2 === 0) note(midi(45), nextNoteAt, 0.12, 'square', 0.04);
-    } else {
-      // Bass pulse with a sparse melody.
-      if (s % 4 === 0) note(midi(38), nextNoteAt, 0.5, 'sine', 0.16);
-      if (s === 2 || s === 7 || s === 11) note(midi(69 + (s % 5)), nextNoteAt, 0.3, 'triangle', 0.05);
-    }
-    step++;
-    nextNoteAt += 0.21;
-  }
-  // A new track every 24 seconds of radio.
-  if (trackStartedAt === 0) trackStartedAt = performance.now() / 1000;
-  if (performance.now() / 1000 - trackStartedAt > 24) {
-    G.radioTrack = (G.radioTrack + 1) % STATIONS[G.radio].tracks.length;
-    trackStartedAt = performance.now() / 1000;
-  }
-}
-
-/** Start the radio (on the current station). */
-export function startRadio() {
-  initAudio();
-  if (!ctx || radioTimer) return;
-  nextNoteAt = ctx.currentTime + 0.1;
-  step = 0;
-  trackStartedAt = performance.now() / 1000;
-  radioTimer = setInterval(scheduleRadio, 120);
-}
-
-/** Switch to the next station. */
-export function cycleStation() {
-  G.radio = (G.radio + 1) % STATIONS.length;
-  G.radioTrack = 0;
-  trackStartedAt = performance.now() / 1000;
-  step = 0;
-  return STATIONS[G.radio].name;
-}
-
-/** The name of the current station. */
-export function stationName() {
-  return STATIONS[G.radio].name;
-}
-
-/** A gunshot: a short burst of filtered noise. */
-export function shootSound() {
-  if (!ctx) return;
-  resume();
-  try {
-    const dur = 0.09;
-    const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    const g = ctx.createGain();
-    g.gain.value = 0.25;
-    src.connect(g);
-    g.connect(master);
-    src.start();
-  } catch (e) {
-    // Best effort only.
-  }
-}
-
-/** The car horn: two tones, a quarter of a second. */
-export function hornSound() {
-  initAudio();
-  if (!ctx) return;
-  resume();
-  const at = ctx.currentTime;
-  note(440, at, 0.22, 'square', 0.1);
-  note(554, at, 0.22, 'square', 0.1);
-}
-
-/** A pickup chime: two rising sine notes. */
-export function pickupSound() {
-  initAudio();
-  if (!ctx) return;
-  resume();
-  const at = ctx.currentTime;
-  note(660, at, 0.15, 'sine', 0.1);
-  note(880, at + 0.09, 0.2, 'sine', 0.1);
-}
-
-/** A mission-complete jingle: three rising notes. */
-export function missionSound() {
-  initAudio();
-  if (!ctx) return;
-  resume();
-  const at = ctx.currentTime;
-  note(523, at, 0.18, 'triangle', 0.12);
-  note(659, at + 0.12, 0.18, 'triangle', 0.12);
-  note(784, at + 0.24, 0.3, 'triangle', 0.12);
-}
-
-/** A crash thud: a low sine drop. */
-export function crashSound() {
-  if (!ctx) return;
-  resume();
-  try {
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(120, ctx.currentTime);
-    o.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.18);
-    g.gain.setValueAtTime(0.3, ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
-    o.connect(g);
-    g.connect(master);
-    o.start();
-    o.stop(ctx.currentTime + 0.25);
-  } catch (e) {
-    // Best effort only.
-  }
+// Mute toggle for the V key / the debug API.
+export function setMuted(A, muted) {
+  A.muted = !!muted;
+  if (A.engineGain) A.engineGain.gain.value = 0;
+  return A.muted;
 }

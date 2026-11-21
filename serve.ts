@@ -1,80 +1,61 @@
-// Solmar City v8 — a tiny static server for game/ (Node 22, standard library
-// only), so the entry can be played locally without a build step:
-//   node serve.ts [--port 8080]
-// Serves game/ on http://localhost:8080. It sends the MIME types a browser
-// game needs and refuses any path outside game/. A development convenience,
-// not a web server for the internet.
-import { createReadStream, statSync } from 'node:fs';
-import { createServer } from 'node:http';
-import { extname, join, normalize, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// serve.ts — tiny static dev server for Solmar City.
+// Run with Node 22: `node serve.ts` (serves the repo root on :8080),
+// or `node serve.ts 3000` for another port. Stdlib only, no network
+// access beyond the local socket; the game itself loads no remote assets.
+import * as http from 'node:http';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-const gameRoot = resolve(fileURLToPath(new URL('./game', import.meta.url)));
-const argv = process.argv.slice(2);
-const portFlag = argv.indexOf('--port');
-const wanted = portFlag === -1 ? 8080 : Number(argv[portFlag + 1]);
-const port = Number.isInteger(wanted) && wanted > 0 && wanted < 65536 ? wanted : 8080;
+const ROOT = process.cwd();
+const PORT = parseInt(process.argv[2] || '8080', 10);
 
-const TYPES = new Map([
-  ['.html', 'text/html; charset=utf-8'],
-  ['.js', 'text/javascript; charset=utf-8'],
-  ['.mjs', 'text/javascript; charset=utf-8'],
-  ['.css', 'text/css; charset=utf-8'],
-  ['.json', 'application/json; charset=utf-8'],
-  ['.png', 'image/png'],
-  ['.jpg', 'image/jpeg'],
-  ['.jpeg', 'image/jpeg'],
-  ['.gif', 'image/gif'],
-  ['.webp', 'image/webp'],
-  ['.svg', 'image/svg+xml'],
-  ['.ico', 'image/x-icon'],
-  ['.woff2', 'font/woff2'],
-  ['.txt', 'text/plain; charset=utf-8'],
-  ['.wasm', 'application/wasm'],
-]);
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.ts': 'text/plain; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.md': 'text/markdown; charset=utf-8',
+};
 
-function mimeFor(file) {
-  return TYPES.get(extname(file).toLowerCase()) ?? 'application/octet-stream';
+function safeJoin(root, rel) {
+  const p = path.resolve(root, rel);
+  if (!p.startsWith(path.resolve(root))) return null;
+  return p;
 }
 
-const server = createServer((request, response) => {
-  const url = new URL(request.url ?? '/', 'http://localhost');
-  let pathname;
-  try {
-    pathname = decodeURIComponent(url.pathname);
-  } catch {
-    response.writeHead(400).end('bad request');
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url || '/', 'http://localhost');
+  if (url.pathname === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, game: 'Solmar City' }));
     return;
   }
-  if (pathname.endsWith('/')) pathname += 'index.html';
-  const file = resolve(join(gameRoot, normalize(pathname)));
-  if (file !== gameRoot && !file.startsWith(gameRoot + sep)) {
-    response.writeHead(403).end('forbidden');
-    return;
-  }
-  let size;
-  try {
-    const stats = statSync(file);
-    if (!stats.isFile()) throw new Error('not a file');
-    size = stats.size;
-  } catch {
-    response.writeHead(404).end('not found');
-    return;
-  }
-  response.writeHead(200, {
-    'content-type': mimeFor(file),
-    'content-length': size,
-    'cache-control': 'no-store',
+  let rel = decodeURIComponent(url.pathname);
+  if (rel === '/') rel = '/game/index.html';
+  const file = safeJoin(ROOT, '.' + rel);
+  if (!file) { res.writeHead(403); res.end('forbidden'); return; }
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) { res.writeHead(404); res.end('not found'); return; }
+    const ext = path.extname(file).toLowerCase();
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Content-Length': st.size,
+      'Cache-Control': 'no-cache',
+    });
+    fs.createReadStream(file).pipe(res);
   });
-  createReadStream(file).pipe(response);
 });
 
-server.listen(port, '127.0.0.1', () => {
-  console.log(`Solmar City v8: game/ is on http://localhost:${port}`);
+server.listen(PORT, () => {
+  console.log(`Solmar City dev server: http://localhost:${PORT}/`);
+  console.log(`Serving ${ROOT}`);
 });
 
-// Log server errors instead of crashing the process on a stray connection.
-server.on('error', (err) => {
-  console.error('serve.ts: ' + (err && err.message ? err.message : err));
-  process.exit(1);
-});
+// Health-check route helper (kept tiny on purpose).
+export function healthPath() { return '/'; }

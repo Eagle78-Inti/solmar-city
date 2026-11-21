@@ -4,140 +4,92 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Solmar City — The Solmar Reign</title>
-<link rel="icon" href="data:,">
-<script type="importmap">
-{ "imports": { "three": "./vendor/three.module.min.js" } }
-</script>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23ff2ea6'/></svg>">
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0a0616; font-family: Arial, Helvetica, sans-serif; color: #fff; }
-  #game { display: block; width: 100vw; height: 100vh; }
-  .panel { position: absolute; background: rgba(8, 8, 18, 0.72); border-radius: 10px; padding: 10px 14px; backdrop-filter: blur(2px); }
-  #hudTL { top: 12px; left: 12px; min-width: 230px; }
-  #cash { font-size: 28px; font-weight: bold; color: #7dff6a; line-height: 1.1; }
-  #respect { font-size: 12px; color: #ffd23e; margin-top: 2px; }
-  #rank, #role, #district { font-size: 12px; color: #cfd8e0; }
-  #hudTR { top: 12px; right: 12px; text-align: right; }
-  #wanted { font-size: 22px; color: #ffd23e; letter-spacing: 2px; }
-  #clock { font-size: 18px; font-weight: bold; }
-  #weather, #radio { font-size: 12px; color: #cfd8e0; }
-  #hudBL { bottom: 12px; left: 12px; padding: 6px; }
-  #minimap { display: block; border-radius: 6px; }
-  #missionBanner { position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%); text-align: center; background: rgba(8, 8, 18, 0.72); border-radius: 10px; padding: 8px 22px; }
-  #missionTitle { font-size: 16px; font-weight: bold; color: #ffd23e; }
-  #missionSub { font-size: 13px; color: #fff; }
-  #hudBR { bottom: 12px; right: 12px; text-align: right; font-size: 13px; }
-  #health, #armour, #weapon { margin-top: 2px; }
-  #driveRow { display: none; margin-top: 6px; }
-  .barWrap { width: 170px; height: 8px; background: rgba(255,255,255,0.18); border-radius: 4px; margin-top: 3px; }
-  #gripBar { height: 100%; width: 50%; background: #3ec6ff; border-radius: 4px; }
-  #condBar { height: 100%; width: 100%; background: #7dff6a; border-radius: 4px; }
-  #controls { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 11px; color: rgba(255,255,255,0.75); background: rgba(8,8,18,0.6); border-radius: 8px; padding: 6px 12px; white-space: nowrap; }
-  #subtitle { position: absolute; bottom: 170px; left: 50%; transform: translateX(-50%); font-size: 17px; font-style: italic; color: #ffe9a8; text-shadow: 0 2px 4px #000; display: none; max-width: 80%; text-align: center; }
-  #toast { position: absolute; top: 90px; left: 50%; transform: translateX(-50%); font-size: 15px; background: rgba(8,8,18,0.8); border-radius: 8px; padding: 8px 16px; display: none; }
-  #titleScreen { position: absolute; inset: 0; display: block; background: linear-gradient(180deg, rgba(20,8,40,0.88), rgba(255,110,60,0.55) 55%, rgba(10,6,22,0.92)); text-align: center; padding-top: 13vh; }
-  #titleScreen h1 { font-size: 64px; margin: 0; letter-spacing: 4px; color: #ffd23e; text-shadow: 0 4px 24px rgba(255,90,40,0.8); }
-  #titleScreen h2 { font-size: 22px; color: #fff; margin: 8px 0 4px; }
-  #titleScreen p { font-size: 14px; color: #e8e0ff; max-width: 560px; margin: 10px auto; line-height: 1.5; }
-  #titleScreen button { display: block; margin: 12px auto; padding: 12px 42px; font-size: 17px; font-weight: bold; background: #ffd23e; color: #1a1428; border: 0; border-radius: 8px; cursor: pointer; }
-  #titleScreen button:hover { background: #ffe27a; }
-  #briefing { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 560px; max-width: 90vw; background: rgba(10, 10, 26, 0.94); border: 1px solid #ffd23e; border-radius: 12px; padding: 20px 24px; display: none; }
-  .briefTitle { font-size: 24px; font-weight: bold; color: #ffd23e; }
-  .briefAct { font-size: 13px; color: #9fd8ff; margin: 4px 0 12px; }
-  .briefLine { font-size: 14px; line-height: 1.5; margin: 6px 0; }
-  .briefLine b { color: #ff9a5a; }
-  .briefStages { font-size: 13px; font-weight: bold; color: #7dff6a; margin-top: 12px; }
-  .briefStage { font-size: 13px; margin: 3px 0 3px 14px; }
-  #briefAccept { margin-top: 14px; padding: 10px 30px; font-size: 15px; font-weight: bold; background: #ffd23e; color: #1a1428; border: 0; border-radius: 8px; cursor: pointer; }
-  #mapOverlay { position: absolute; inset: 0; background: rgba(6, 10, 8, 0.92); display: none; text-align: center; padding-top: 20px; }
-  #mapOverlay h2 { margin: 0 0 10px; color: #ffd23e; }
-  #mapCanvas { border-radius: 8px; }
-  #pauseMenu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 520px; max-width: 92vw; background: rgba(10, 10, 26, 0.95); border: 1px solid #3ec6ff; border-radius: 12px; padding: 18px 22px; display: none; }
-  #pauseMenu h2 { margin: 0 0 10px; color: #3ec6ff; }
-  #pauseMenu button { padding: 8px 18px; margin: 0 6px 12px 0; font-size: 14px; font-weight: bold; background: #223; color: #fff; border: 1px solid #3ec6ff; border-radius: 6px; cursor: pointer; }
-  .statRow, .storyRow { display: flex; justify-content: space-between; font-size: 14px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
-  .statRow b, .storyRow b { color: #ffd23e; }
-  .storyTitle { font-size: 14px; color: #9fd8ff; margin-bottom: 8px; }
-  .storyAct { font-size: 14px; font-weight: bold; color: #7dff6a; margin: 10px 0 4px; }
-  .storyRow i { color: #9a9a9a; font-style: normal; font-size: 12px; }
-  #shopPanel { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 480px; max-width: 92vw; background: rgba(10, 10, 26, 0.95); border: 1px solid #ff6a3e; border-radius: 12px; padding: 18px 22px; display: none; }
-  .shopTitle { font-size: 20px; font-weight: bold; color: #ff6a3e; margin-bottom: 10px; }
-  .shopRow { display: flex; justify-content: space-between; align-items: center; font-size: 14px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
-  .shopRow i { color: #9a9a9a; font-size: 12px; }
-  .shopRow button { padding: 6px 14px; background: #ffd23e; color: #1a1428; border: 0; border-radius: 6px; font-weight: bold; cursor: pointer; }
-  .shopRow button:disabled { background: #555; color: #aaa; cursor: default; }
-  #shopClose { margin-top: 12px; padding: 8px 18px; background: #223; color: #fff; border: 1px solid #ff6a3e; border-radius: 6px; cursor: pointer; }
-  #wheel { position: absolute; bottom: 150px; left: 50%; transform: translateX(-50%); display: none; gap: 8px; }
-  .wheelSlot { width: 92px; text-align: center; background: rgba(10,10,26,0.85); border: 2px solid #444; border-radius: 8px; padding: 8px 4px; font-size: 12px; }
-  .wheelSlot.active { border-color: #ffd23e; background: rgba(60,50,10,0.9); }
-  .wheelSlot.locked { opacity: 0.45; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #070d1f; font-family: Arial, Helvetica, sans-serif; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.8); z-index: 5; }
+  .hud-tl { position: absolute; top: 14px; left: 16px; background: rgba(8,12,24,.55); padding: 10px 14px; border-radius: 8px; }
+  .money { font-size: 30px; font-weight: 900; color: #7dff5a; }
+  .sub { font-size: 13px; color: #dfe8ff; margin-top: 2px; }
+  .hud-tr { position: absolute; top: 14px; right: 16px; text-align: right; background: rgba(8,12,24,.55); padding: 10px 14px; border-radius: 8px; }
+  .stars { font-size: 22px; letter-spacing: 2px; }
+  .hud-br { position: absolute; right: 16px; bottom: 16px; text-align: right; background: rgba(8,12,24,.55); padding: 10px 14px; border-radius: 8px; }
+  .bar { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 11px; }
+  .barfill { width: 120px; height: 8px; background: rgba(255,255,255,.18); border-radius: 4px; overflow: hidden; }
+  .barfill i { display: block; height: 100%; background: #22e6ff; }
+  .hud-bc { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); text-align: center; }
+  .mission { font-size: 16px; font-weight: 700; color: #ffc93a; background: rgba(8,12,24,.6); padding: 6px 14px; border-radius: 6px; }
+  #minimap { position: absolute; left: 16px; bottom: 16px; border: 2px solid rgba(255,255,255,.35); border-radius: 8px; background: rgba(10,16,26,.85); }
+  .hud-hint { position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); font-size: 10px; color: rgba(255,255,255,.55); white-space: nowrap; }
+  .panel { position: fixed; z-index: 10; background: rgba(8,12,24,.92); color: #fff; border: 1px solid rgba(255,255,255,.2); border-radius: 10px; padding: 18px 22px; display: none; }
+  #map-panel { top: 50%; left: 50%; transform: translate(-50%,-50%); width: 640px; max-height: 80vh; overflow: auto; }
+  #pause-panel { top: 50%; left: 50%; transform: translate(-50%,-50%); width: 680px; max-height: 84vh; overflow: auto; }
+  #briefing-panel { top: 16%; left: 50%; transform: translateX(-50%); width: 560px; }
+  #dialogue-panel { left: 50%; bottom: 110px; transform: translateX(-50%); width: 620px; font-size: 17px; line-height: 1.5; }
+  #choice-panel { top: 40%; left: 50%; transform: translate(-50%,-50%); width: 480px; text-align: center; }
+  #shop-panel { top: 50%; left: 50%; transform: translate(-50%,-50%); width: 440px; pointer-events: auto; }
+  #wheel-panel { top: 50%; left: 50%; transform: translate(-50%,-50%); width: 380px; }
+  #stats-panel, #story-panel { margin-top: 16px; }
+  h2 { font-size: 20px; letter-spacing: 1px; margin-bottom: 10px; color: #ffc93a; }
+  .map-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .map-district { background: rgba(255,255,255,.07); padding: 8px 10px; border-radius: 6px; }
+  .map-district b { display: block; font-size: 15px; }
+  .map-district span { font-size: 12px; color: #bcd; }
+  .map-district i { color: #7dff5a; font-size: 12px; margin-left: 6px; }
+  .map-legend { margin-top: 12px; font-size: 12px; color: #cde; display: flex; flex-wrap: wrap; gap: 10px; }
+  .map-held { margin-top: 10px; font-size: 13px; color: #ffc93a; }
+  .stat-row, .story-row { display: flex; justify-content: space-between; padding: 5px 2px; border-bottom: 1px solid rgba(255,255,255,.08); font-size: 14px; }
+  .story-row.done span { color: #7dff5a; }
+  .story-brief { font-size: 12px; color: #9ab; padding: 2px 2px 6px; }
+  .act-row { font-weight: 700; margin-top: 8px; color: #22e6ff; }
+  .brief-line { font-size: 14px; line-height: 1.5; margin-bottom: 6px; }
+  .brief-hint, .dialogue-hint, .shop-hint { margin-top: 10px; font-size: 12px; color: #9ab; }
+  .shop-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+  button { background: #ff2ea6; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; font-size: 14px; font-weight: 700; cursor: pointer; margin: 4px; }
+  button:hover { background: #ff5ab8; }
+  .wheel-row { display: flex; justify-content: space-between; padding: 6px 2px; border-bottom: 1px solid rgba(255,255,255,.08); }
+  .wheel-row.active { color: #ffc93a; font-weight: 700; }
+  .wheel-row.locked { opacity: .45; }
+  #title-screen { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(180deg, #1a0b2e 0%, #ff7a3c 55%, #0b1226 100%); color: #fff; text-align: center; }
+  #title-screen h1 { font-size: 64px; letter-spacing: 4px; text-shadow: 0 4px 24px rgba(0,0,0,.6); }
+  #title-screen .tag { font-size: 20px; color: #ffd9b0; margin: 10px 0 26px; }
+  #title-screen .meta { font-size: 14px; color: #e8e8e8; margin-bottom: 24px; line-height: 1.7; }
+  #title-screen button { font-size: 18px; padding: 12px 34px; }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
-
-<div id="hudTL" class="panel">
-  <div id="cash">$800</div>
-  <div id="respect">RESPECT 0/100</div>
-  <div id="rank">Rank 1 · 0 RP</div>
-  <div id="role">Nobody</div>
-  <div id="district">Downtown · Neutral · 0</div>
+<div id="hud"></div>
+<div id="map-panel" class="panel"></div>
+<div id="pause-panel" class="panel">
+  <h2>PAUSED — SOLMAR CITY</h2>
+  <div id="map-panel-inner"></div>
+  <div id="stats-panel"></div>
+  <div id="story-panel"></div>
+  <div class="brief-hint">Esc to resume · M map · F9 quick save at the safehouse</div>
 </div>
-
-<div id="hudTR" class="panel">
-  <div id="wanted">☆☆☆☆☆</div>
-  <div id="clock">Day 1 · 18:12</div>
-  <div id="weather">Clear</div>
-  <div id="radio">Vice FM 88.4 — Sunset Drive</div>
-</div>
-
-<div id="hudBL" class="panel"><canvas id="minimap" width="180" height="180"></canvas></div>
-
-<div id="missionBanner"><div id="missionTitle"></div><div id="missionSub"></div></div>
-
-<div id="hudBR" class="panel">
-  <div id="health">Health 100</div>
-  <div id="armour">Armour 40</div>
-  <div id="weapon">.38 Pistol 12/48</div>
-  <div id="driveRow"><span id="gripRow">GRIP 50 · Condition 100%</span>
-    <div class="barWrap"><div id="gripBar"></div></div>
-    <div class="barWrap"><div id="condBar"></div></div>
-  </div>
-</div>
-
-<div id="controls">WASD move/drive · Mouse drag camera · E interact · F enter/exit · Click shoot · R reload · 1–5 weapons · Q wheel · C switch Jason/Lucia · V radio · T taxi · Y courier · M map · Esc pause</div>
-<div id="subtitle"></div>
-<div id="toast"></div>
-
-<div id="titleScreen">
+<div id="briefing-panel" class="panel"></div>
+<div id="dialogue-panel" class="panel"></div>
+<div id="choice-panel" class="panel"></div>
+<div id="shop-panel" class="panel"></div>
+<div id="wheel-panel" class="panel"></div>
+<div id="title-screen">
   <h1>SOLMAR CITY</h1>
-  <h2>The Solmar Reign</h2>
-  <p>Seven districts. Three acts. Eight missions. Two endings. Dario owes Rook fifty grand — work it off, or take the crown. Drive, steal, fight and fly your way across Solmar City.</p>
-  <button id="btnNew">NEW GAME</button>
-  <button id="btnContinue">CONTINUE</button>
-  <p>Best with keyboard and mouse · Sound on for the radio · M for the full city map, Esc for career stats</p>
+  <div class="tag">The Solmar Reign — 3 acts · 8 missions · 2 endings</div>
+  <div class="meta">7 districts · flyable helicopter · Kelo Arms · Sunset Garage<br>Jason &amp; Lucia · 3 radio stations · rain, neon and the whole bay</div>
+  <button id="start-btn">START — Press E or click</button>
+  <div class="meta" style="margin-top:18px">WASD move / drive · E interact · F enter / exit · M map · Esc pause</div>
 </div>
-
-<div id="briefing"></div>
-
-<div id="mapOverlay"><h2>SOLMAR CITY — press M to close</h2><canvas id="mapCanvas" width="760" height="560"></canvas></div>
-
-<div id="pauseMenu">
-  <h2>PAUSED</h2>
-  <button id="btnStats">Career stats</button>
-  <button id="btnStory">Story</button>
-  <button id="btnResume">Resume (Esc)</button>
-  <div id="statsBody"></div>
-  <div id="storyBody"></div>
-</div>
-
-<div id="shopPanel"></div>
-<div id="wheel"></div>
-
-<script type="module">
-import { init } from './src/main.js';
-init();
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+<script type="module" src="./src/main.js"></script>
+<script>
+  document.getElementById('start-btn').addEventListener('click', () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e' }));
+  });
 </script>
 </body>
 </html>
-
-<div id="versionTag" style="position:absolute;top:12px;left:50%;transform:translateX(-50%);font-size:11px;color:rgba(255,255,255,0.6);background:rgba(8,8,18,0.55);border-radius:6px;padding:3px 10px;">Solmar City v10 · The Solmar Reign · 7 districts · 3 acts · 8 missions · 2 endings</div>
